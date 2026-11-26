@@ -121,6 +121,7 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `QC_CLUSTER_SIMILARITY`, `QC_NOTIFY_TO` | ОКК | `0.85`, `qc@example.org` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | почта | |
 | `AUDIT_RETENTION_DAYS` | срок хранения журнала | `90` |
+| `VITE_ASSISTANT_ID` | ID графа или ассистента в Aegra. Пустое значение подходит для стенда с одним ассистентом | |
 | `VITE_API_URL`, `VITE_OIDC_AUTHORITY`, `VITE_OIDC_CLIENT_ID` | web (на этапе сборки) | |
 
 Переменные самой Aegra (`AEGRA_CONFIG`, `AUTH_TYPE`, её `POSTGRES_*`) — по её документации, отображаются на наши.

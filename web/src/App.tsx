@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { Button } from '@/components/ui/button'
+const Chat = lazy(async () => ({ default: (await import('./features/chat/Chat')).Chat }))
 
 export default function App() {
   const auth = useAuth()
@@ -41,9 +42,11 @@ export default function App() {
         }}>Выйти</Button>
       </header>
       {actionError && <p className="text-sm text-destructive" role="alert">{actionError}</p>}
-      <section aria-label="Чат" className="grid flex-1 place-items-center">
-        <p className="text-sm text-muted-foreground">Здесь появится диалог.</p>
-      </section>
+      {auth.user?.access_token && (
+        <Suspense fallback={<p role="status">Загружаю чат…</p>}>
+          <Chat token={auth.user.access_token} />
+        </Suspense>
+      )}
     </main>
   )
 }
