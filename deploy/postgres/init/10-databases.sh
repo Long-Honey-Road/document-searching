@@ -14,3 +14,8 @@ for db in "${APP_DB}" "${KNOWLEDGE_DB}"; do
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -d "$db" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 done
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -d "${KNOWLEDGE_DB}" -c "CREATE EXTENSION IF NOT EXISTS age;"
+# LightRAG использует типы и функции AGE от имени владельца knowledge.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -d "$KNOWLEDGE_DB" \
+  -v "knowledge_role=$KNOWLEDGE_DB_USER" <<'SQL'
+GRANT USAGE ON SCHEMA ag_catalog TO :"knowledge_role";
+SQL
