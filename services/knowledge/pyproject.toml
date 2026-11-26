@@ -2,7 +2,20 @@
 name = "regagent-knowledge"
 version = "0.1.0"
 requires-python = ">=3.12,<3.14"
-dependencies = ["regagent-common", "fastapi", "uvicorn[standard]", "lightrag-hku", "docling", "pymorphy3", "watchdog", "gitpython", "aio-pika", "asyncpg", "httpx"]
+dependencies = [
+    "regagent-common",
+    "fastapi",
+    "uvicorn[standard]",
+    "lightrag-hku",
+    "docling",
+    "pymorphy3",
+    "watchdog",
+    "gitpython",
+    "aio-pika",
+    "asyncpg",
+    "httpx",
+    "pgvector>=0.5.1",
+]
 
 [build-system]
 requires = ["hatchling"]
