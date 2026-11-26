@@ -64,6 +64,8 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 
 web заменяет `[f:...]` на номера `[1]` по `sources`.
 
+Где лежит (D-19): итоговое сообщение — AIMessage из узла `finalize`, `AnswerMeta` — в `additional_kwargs.answer_meta`. `assistant_id` — `regagent`. Черновик стримится событиями `messages` с `metadata.langgraph_node = "agent"`; web показывает сообщения пользователя и AI-сообщения с `answer_meta`, остальные (вызовы инструментов) скрывает.
+
 ## Память
 
 Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значение `{kind, value, source, confirmed_at, times_confirmed}`.
@@ -105,6 +107,9 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `KEYCLOAK_DB`, `KEYCLOAK_DB_USER`, `KEYCLOAK_DB_PASSWORD` | БД Keycloak | |
 | `RABBITMQ_URL` | брокер | |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD` | OIDC и админ Keycloak | |
+| `KEYCLOAK_JWKS_URL` | ключи Keycloak по внутреннему адресу (`iss` проверяется по `KEYCLOAK_ISSUER`) | `http://keycloak:8080/auth/realms/regagent/protocol/openid-connect/certs` |
+| `JWKS_CACHE_TTL_S`, `JWKS_MIN_REFRESH_S`, `JWT_LEEWAY_S` | срок кэша ключей, минимальный интервал внеочередного обновления (новый `kid`, Keycloak недоступен), допуск по времени токена | `300`, `30`, `30` |
+| `AREA_CODES` | коды областей через запятую — справочник backend на этап 1 (D-20) | `ДИБ,ДБРЦТ,общий` |
 | `ACCESS_LEVELS_FILE` | YAML уровней доступа | `config/access_levels.yaml` |
 | `KNOWLEDGE_URL`, `KNOWLEDGE_INTERNAL_TOKEN` | адрес и токен knowledge | |
 | `DOCS_DIR`, `OKF_DIR` | папки документов и OKF | `/data/docs`, `/data/okf` |
@@ -120,4 +125,4 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `AUDIT_RETENTION_DAYS` | срок хранения журнала | `90` |
 | `VITE_API_URL`, `VITE_OIDC_AUTHORITY`, `VITE_OIDC_CLIENT_ID` | web (на этапе сборки) | |
 
-Переменные самой Aegra (`AEGRA_CONFIG`, `AUTH_TYPE`, её `POSTGRES_*`) — по её документации, отображаются на наши.
+Переменные самой Aegra задаются в compose и отображаются на наши: `PORT=8000` (по умолчанию в Aegra 0.12 — 2026), `AEGRA_CONFIG=<путь к services/backend/aegra.json в образе>`, `AUTH_TYPE=custom`, `DATABASE_URL=postgresql://${APP_DB_USER}:${APP_DB_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${APP_DB}` (D-17, D-19).
