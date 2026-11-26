@@ -1,0 +1,11 @@
+# Набор вопросов с эталонами (dev_docs/08-testing-quality.md).
+# outcome: answer | ask_area | refusal | not_found
+questions: []
+# Пример записи:
+# - id: q001
+#   user: employee_public
+#   question: Кто назначает РП на проект?
+#   areas: []
+#   outcome: ask_area
+#   expected_clauses: ["dib-project-activity#2.7", "dbrct-project-activity#2.5"]
+#   reference_answer: В ДИБ — координатор департамента за 1 рабочий день, в ДБРЦТ — ...

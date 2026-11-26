@@ -1,0 +1,55 @@
+# --- Секреты и локальная конфигурация ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Данные: документы заказчика, OKF стенда, выгрузки ---
+data/*
+!data/README.md
+!data/docs/
+!data/okf/
+data/docs/*
+data/okf/*
+!data/docs/.gitkeep
+!data/okf/.gitkeep
+*.docx
+*.pdf
+!eval/**/*.pdf
+
+# --- Python / uv ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Node / web ---
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# --- Отчёты и артефакты прогонов ---
+eval/reports/*
+!eval/reports/.gitkeep
+*.log
+logs/
+
+# --- IDE / ОС ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.swp

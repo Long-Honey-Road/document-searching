@@ -1,0 +1,7 @@
+# Уровни доступа: уровень -> группы Keycloak. "*" — любой вошедший пользователь.
+# Документ принадлежит ровно одному уровню (manifest.yaml, поле access).
+levels:
+  public:
+    groups: ["*"]
+  closed_fin:
+    groups: ["/levels/closed_fin"]

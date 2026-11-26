@@ -1,0 +1,29 @@
+{
+	auto_https off
+}
+
+:8080 {
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	respond /robots.txt <<TXT
+		User-agent: *
+		Disallow: /
+		TXT 200
+
+	# Лимит по IP добавляется плагином rate_limit (задача P0-3); лимит на учётку — в backend.
+
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+	handle /auth/* {
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		reverse_proxy web:80
+	}
+}
