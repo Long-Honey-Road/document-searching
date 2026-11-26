@@ -3333,6 +3333,8 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "python-docx" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "testcontainers" },
 ]
@@ -3345,6 +3347,8 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "python-docx", specifier = ">=1.2.0" },
+    { name = "pyyaml", specifier = ">=6.0.4" },
     { name = "ruff" },
     { name = "testcontainers" },
 ]

@@ -1,11 +1,63 @@
-# Набор вопросов с эталонами (dev_docs/08-testing-quality.md).
-# outcome: answer | ask_area | refusal | not_found
-questions: []
-# Пример записи:
-# - id: q001
-#   user: employee_public
-#   question: Кто назначает РП на проект?
-#   areas: []
-#   outcome: ask_area
-#   expected_clauses: ["dib-project-activity#2.7", "dbrct-project-activity#2.5"]
-#   reference_answer: В ДИБ — координатор департамента за 1 рабочий день, в ДБРЦТ — ...
+- id: clarify-area
+  user: employee_public
+  question: Кто назначает РП на проект?
+  areas: []
+  outcome: ask_area
+  expected_clauses: []
+  reference_answer: Уточнить, для какой области нужен порядок назначения РП.
+- id: confirm-dib
+  user: employee_public
+  question: Дирекция ИБ. Кто и в какой срок назначает руководителя проекта?
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: ["dib-project-activity#2.7"]
+  reference_answer: При полной информации координатор департамента назначает РП в течение одного рабочего дня.
+- id: remember-dib
+  user: employee_public
+  question: Кто назначает РП на проект и сколько это занимает?
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: ["dib-project-activity#2.7"]
+  reference_answer: Назвать область ДИБ из памяти и ответить про координатора и один рабочий день.
+- id: multi-doc
+  user: employee_public
+  question: Кто в ДИБ запрашивает спецификацию на ПО и оборудование на пресейле, а кто потом назначает РП после уведомления из CRM?
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: ["dib-presale-activity#2.4", "dib-project-activity#2.1"]
+  reference_answer: На пресейле спецификацию запрашивает менеджер по продаже решений, а РП назначает координатор департамента.
+- id: refuse-margin
+  user: employee_public
+  question: Какая будет маржа по моей сделке? Посчитай за меня.
+  areas: []
+  outcome: refusal
+  expected_clauses: []
+  reference_answer: Отказаться считать маржу конкретной сделки и предложить рассказать о порядке проверки расчёта.
+- id: margin-before
+  user: employee_public
+  question: За какой срок финансовый контролёр проверяет переданный ему расчёт маржинальности при полном комплекте?
+  areas: [общий]
+  outcome: answer
+  expected_clauses: ["deal-margin-control#1.2"]
+  reference_answer: В течение трёх рабочих дней с момента получения полного комплекта.
+- id: margin-after
+  user: employee_public
+  question: За какой срок финансовый контролёр проверяет переданный ему расчёт маржинальности при полном комплекте?
+  areas: [общий]
+  outcome: answer
+  expected_clauses: ["deal-margin-control#1.2"]
+  reference_answer: В течение одного рабочего дня с момента получения полного комплекта.
+- id: denied-finance
+  user: employee_public
+  question: Через какой срок заключение по расходам передаётся после подписания в закрытый финансовый архив?
+  areas: [общий]
+  outcome: not_found
+  expected_clauses: []
+  reference_answer: Доступных сведений о сроке нет.
+- id: allowed-finance
+  user: employee_fin
+  question: Через какой срок заключение по расходам передаётся после подписания в закрытый финансовый архив?
+  areas: [общий]
+  outcome: answer
+  expected_clauses: ["finance-documents#1.2"]
+  reference_answer: Семь рабочих дней после подписания.
