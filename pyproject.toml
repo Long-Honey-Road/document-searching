@@ -14,8 +14,7 @@ members = ["packages/common", "services/knowledge", "services/backend"]
 [tool.uv.sources]
 regagent-common = { workspace = true }
 
-# Версии не закреплены намеренно: первый `uv lock` берёт актуальные,
-# дальше их фиксирует uv.lock. Новые зависимости добавлять через `uv add`.
+# uv.lock фиксирует разрешённые версии. Новые зависимости добавлять через `uv add`.
 [dependency-groups]
 dev = [
   "pytest",
@@ -49,6 +48,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках 
 "**/tests/**" = ["S101"]
 
 [tool.mypy]
+explicit_package_bases = true
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
