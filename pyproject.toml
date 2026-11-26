@@ -27,7 +27,8 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["packages", "services"]
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["packages", "services", "deploy/tests"]
 markers = [
   "integration: нужны контейнеры (Postgres, RabbitMQ)",
   "e2e: весь стенд в compose",

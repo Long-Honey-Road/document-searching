@@ -1,5 +1,6 @@
 # Запуск: docker compose -f deploy/compose.yaml --env-file .env up -d
-# Профили: dev (Mailpit), local-embeddings (TEI). Сервисы knowledge, backend и web
+# Профили: dev (Mailpit), local-embeddings (TEI), local-reranker (только реранкер).
+# Сервисы knowledge, backend и web
 # добавляются задачами плана (dev_docs/10-work-plan.md).
 name: regagent
 
@@ -36,8 +37,7 @@ services:
       retries: 10
 
   keycloak:
-    # Перед стендом закрепить актуальную версию без известных CVE.
-    image: quay.io/keycloak/keycloak:latest
+    image: quay.io/keycloak/keycloak:26.8.2
     command: ["start-dev", "--import-realm", "--http-relative-path=/auth"]
     environment:
       KC_DB: postgres
@@ -47,6 +47,13 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME: ${PUBLIC_BASE_URL}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      WEB_DEV_BASE_URL: ${WEB_DEV_BASE_URL:-http://localhost:5173}
+      KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD: ${KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD}
+      KEYCLOAK_EMPLOYEE_FIN_PASSWORD: ${KEYCLOAK_EMPLOYEE_FIN_PASSWORD}
+      KEYCLOAK_QC_EXPERT_PASSWORD: ${KEYCLOAK_QC_EXPERT_PASSWORD}
+      KEYCLOAK_ADMIN_DEMO_PASSWORD: ${KEYCLOAK_ADMIN_DEMO_PASSWORD}
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
     depends_on:
@@ -56,25 +63,25 @@ services:
   proxy:
     image: caddy:latest
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
 
   embeddings:
     profiles: ["local-embeddings"]
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.10}
     command: ["--model-id", "${EMBEDDINGS_MODEL}"]
 
   reranker:
-    profiles: ["local-embeddings"]
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    profiles: ["local-embeddings", "local-reranker"]
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.10}
     command: ["--model-id", "${RERANK_MODEL}"]
 
   mailpit:
     profiles: ["dev"]
     image: axllent/mailpit:latest
     ports:
-      - "8025:8025"
+      - "127.0.0.1:8025:8025"
 
 volumes:
   pgdata:

@@ -115,4 +115,4 @@ sequenceDiagram
 
 ## Развёртывание
 
-Один `docker compose` на машине стенда. Профили: `dev` (Mailpit, открытые порты для отладки), `local-embeddings` (TEI). Наружу открыт только `proxy`. Пользователи Postgres раздельные: у `knowledge` права владельца только на БД `knowledge` (LightRAG создаёт таблицы и расширения при старте), у `backend` — только на `app`.
+Один `docker compose` на машине стенда. Профили: `dev` (Mailpit, открытые порты для отладки), `local-embeddings` (оба сервиса TEI), `local-reranker` (только реранкер при внешнем API эмбеддингов). Локальный стенд публикует Caddy на loopback хоста. Пользователи Postgres раздельные: у `knowledge` права владельца только на БД `knowledge` (LightRAG создаёт таблицы и расширения при старте), у `backend` — только на `app`.

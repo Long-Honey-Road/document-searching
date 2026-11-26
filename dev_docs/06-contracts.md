@@ -98,6 +98,7 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `LLM_TIMEOUT_S`, `LLM_MAX_CONCURRENCY` | таймаут и параллелизм | `120`, `8` |
 | `LLM_EXTRA_BODY_JSON` | доп. параметры запроса, зависящие от сервера (например отключение рассуждений) | `{"chat_template_kwargs":{"enable_thinking":false}}` |
 | `EMBEDDINGS_BASE_URL`, `EMBEDDINGS_MODEL`, `EMBEDDINGS_DIM` | эмбеддинги | `http://embeddings:80`, `BAAI/bge-m3`, `1024` |
+| `TEI_IMAGE` | Образ TEI для архитектуры хоста (`cpu-arm64-1.10` на Apple Silicon) | `ghcr.io/huggingface/text-embeddings-inference:cpu-1.10` |
 | `RERANK_BASE_URL`, `RERANK_MODEL`, `RERANK_MIN_SCORE` | реранкер и порог | |
 | `POSTGRES_HOST`, `POSTGRES_PORT` | Postgres | |
 | `APP_DB`, `APP_DB_USER`, `APP_DB_PASSWORD` | БД backend | |
@@ -105,6 +106,8 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `KEYCLOAK_DB`, `KEYCLOAK_DB_USER`, `KEYCLOAK_DB_PASSWORD` | БД Keycloak | |
 | `RABBITMQ_URL` | брокер | |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD` | OIDC и админ Keycloak | |
+| `WEB_DEV_BASE_URL` | Дополнительный origin для Vite в realm | `http://localhost:5173` |
+| `KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD`, `KEYCLOAK_EMPLOYEE_FIN_PASSWORD`, `KEYCLOAK_QC_EXPERT_PASSWORD`, `KEYCLOAK_ADMIN_DEMO_PASSWORD` | Пароли именных учёток, импортируемые при создании demo realm | |
 | `ACCESS_LEVELS_FILE` | YAML уровней доступа | `config/access_levels.yaml` |
 | `KNOWLEDGE_URL`, `KNOWLEDGE_INTERNAL_TOKEN` | адрес и токен knowledge | |
 | `DOCS_DIR`, `OKF_DIR` | папки документов и OKF | `/data/docs`, `/data/okf` |
