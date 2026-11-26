@@ -1,0 +1,8 @@
+{
+  "graphs": {
+    "regagent": "./src/regagent_backend/graph.py:graph"
+  },
+  "auth": {
+    "path": "regagent_backend.auth:auth"
+  }
+}
