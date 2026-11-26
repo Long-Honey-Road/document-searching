@@ -56,6 +56,20 @@ class ClauseResponse(_Model):
     neighbors: list[Fragment]
 
 
+class Area(_Model):
+    """Запись справочника областей (секция ``areas:`` манифеста)."""
+
+    code: str
+    title: str
+    synonyms: list[str] = Field(default_factory=list)
+
+
+class AreasResponse(_Model):
+    """``GET /areas`` knowledge — справочник областей для backend (проверка памяти)."""
+
+    areas: list[Area]
+
+
 # --- RabbitMQ ---
 
 

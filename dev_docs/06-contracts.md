@@ -35,6 +35,10 @@
 
 `{"doc_id", "levels"}` → `{"outgoing": [{"doc_id", "title", "clause", "via"}], "incoming": [...]}` — только доступные.
 
+### `GET /areas`
+
+Справочник областей из манифеста: `{"areas": [{"code": "ДИБ", "title": "Дирекция ИБ", "synonyms": [...]}]}`. С сервисным токеном. backend по нему проверяет значение `area` перед записью в память (D-20).
+
 ### Служебные (`/admin/...`)
 
 `GET /admin/documents`, `GET /admin/jobs?status=failed`, `POST /admin/jobs/{id}/retry`, `GET /admin/review` (глоссарий и ссылки на сверку), `POST /admin/review/{id}` (`accept|reject|edit`). `GET /health` — без токена.
