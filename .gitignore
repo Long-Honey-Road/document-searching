@@ -53,3 +53,11 @@ logs/
 .DS_Store
 Thumbs.db
 *.swp
+
+# AI
+AGENT.md
+*.superpowers
+
+# local
+*.local
+*.hide
