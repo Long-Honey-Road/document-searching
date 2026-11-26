@@ -52,3 +52,4 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках 
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+plugins = ["pydantic.mypy"]

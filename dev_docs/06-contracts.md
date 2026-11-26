@@ -25,7 +25,7 @@
 }
 ```
 
-`fragment_id` = `<doc_id>@<version>#<clause>` для регламентов, `practice:<practice_id>` для практики.
+`fragment_id` = `<doc_id>@<version>#<clause>` для регламентов, `practice:<practice_id>` для практики. У фрагментов практики `version` может быть `null` (D-17). `top_k` необязателен: `null` — `SEARCH_TOP_K` knowledge.
 
 ### `POST /clause`
 
@@ -45,7 +45,7 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 
 | Ключ / очередь | Кто пишет | Кто читает | Тело |
 | --- | --- | --- | --- |
-| `index.jobs` | knowledge.watcher | knowledge.consumer | `{op: "upsert"|"delete", doc_id, version, path, sha256}` |
+| `index.jobs` | knowledge.watcher | knowledge.consumer | `{job_id, op: "upsert"|"delete", doc_id, version, path, sha256}`; у `delete` `path` и `sha256` необязательны (D-18) |
 | `practice.publish` | backend (ОКК) | knowledge.consumer | `{practice_id, text, binds: [{doc_id, clause}], mode, areas, verified: {by, at}, source_cluster_id}` |
 | `practice.published` | knowledge | backend | `{practice_id, source_cluster_id, status: "indexed"|"failed", error}` |
 | `qc.events` | knowledge | backend | `{kind: "recheck", reason: "new_version"|"deleted", doc_id, practice_ids: [...]}` |
