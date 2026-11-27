@@ -78,9 +78,11 @@ web заменяет `[f:...]` на номера `[1]` по `sources`.
 
 Где лежит (D-19): итоговое сообщение — AIMessage из узла `finalize`, `AnswerMeta` — в `additional_kwargs.answer_meta`. `assistant_id` — `regagent`. Публичный стрим доставляет проверенный итог. Вызовы инструментов, результаты поиска и черновик модели остаются во внутреннем запуске (D-35).
 
+В публичном стриме событие `metadata` содержит `run_id`. Прогон качества сохраняет его вместе с ответом или ошибкой, если сервер успел передать идентификатор. По нему ищутся события `turn.result` и отдельные этапы внутри backend. У `ask_area`, `ask_clarification` и `qc_help` поле `sources` пустое (D-62, D-63).
+
 ## Итог хода для аналитики ОКК (стык B + C)
 
-`regagent_common.contracts.TurnReport` — один на ход с `run_id`. Граф передаёт его вместе с `UserIdentity` в `TurnSink.record(report, identity)` после того, как ответ готов (D-54). Рабочий приёмник — `QcTurnSink`: переводит `TurnReport` в `qc_analytics.TurnOutcome` потока B (вопрос обрезается до 4000 символов, фрагменты — до 500) и вызывает `record_turn`. Соответствие исходов: answered→answer, empty_search, unsupported→insufficient_evidence, ask_area и ask_clarification→clarification, refused→refusal, search_unavailable, model_timeout; для `error` в аналитике B нет значения — такой ход виден только в событиях.
+`regagent_common.contracts.TurnReport` — один на ход с `run_id`. Граф передаёт его вместе с `UserIdentity` в `TurnSink.record(report, identity)` после того, как ответ готов (D-54). Рабочий приёмник — `QcTurnSink`: переводит `TurnReport` в `qc_analytics.TurnOutcome` потока B (вопрос обрезается до 4000 символов, фрагменты — до 500) и вызывает `record_turn`. Соответствие исходов: answered→answer, empty_search, unsupported→insufficient_evidence, ask_area и ask_clarification→clarification, refused→refusal, search_unavailable, model_timeout; `error` сохраняется в аналитике как `error`.
 
 | Поле | Что |
 | --- | --- |
