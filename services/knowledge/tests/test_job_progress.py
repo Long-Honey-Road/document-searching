@@ -9,7 +9,6 @@ import pytest
 from aio_pika.abc import AbstractIncomingMessage
 from regagent_common.contracts import IndexJob
 from regagent_knowledge.consumer import _process_message
-from regagent_knowledge.jobs import IndexRequest
 from regagent_knowledge.pipeline import PipelineDeps
 from regagent_knowledge.registry import JobState
 from regagent_knowledge.reindex import queue_reindex
@@ -139,7 +138,7 @@ async def test_reindex_queues_current_document_and_deduplicates_delivery(
 
     assert await queue_reindex(FolderSource(folder.path, LEVELS), registry, Publisher()) == 1
     [forced] = published
-    assert isinstance(forced, IndexRequest) and forced.force
+    assert forced.force
     assert forced.sha256 == original.sha256 and forced.job_id != original.job_id
     await _process_message(cast(AbstractIncomingMessage, Message(forced)), deps)
     await _process_message(cast(AbstractIncomingMessage, Message(forced)), deps)
@@ -172,7 +171,7 @@ async def test_reindex_failed_retries_only_failed_documents(
     await registry.set_status("gone", 2, "old", "public", "failed", "сбой")
     assert await queue_reindex(source, registry, Publisher(), only_failed=True) == 2
     by_doc = {job.doc_id: job for job in published}
-    assert by_doc["a"].op == "upsert" and isinstance(by_doc["a"], IndexRequest)
+    assert by_doc["a"].op == "upsert"
     assert by_doc["a"].force and by_doc["a"].sha256 == original.sha256
     assert (by_doc["gone"].op, by_doc["gone"].version) == ("delete", 2)
 

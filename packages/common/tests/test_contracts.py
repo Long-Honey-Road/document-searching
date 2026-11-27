@@ -192,3 +192,13 @@ def test_admin_job_and_review_contracts() -> None:
     assert review.items[0].kind == "ambiguous"
     with pytest.raises(ValidationError):
         AdminReview.model_validate({"items": [{**review.items[0].model_dump(), "kind": "x"}]})
+
+
+def test_index_job_force_flag_is_part_of_the_contract() -> None:
+    """Переиндексация (D-45) ставит force: флаг — часть общего контракта index.jobs."""
+    plain = IndexJob(op="upsert", doc_id="a", version=1, path="a.docx", sha256="s")
+    assert plain.force is False
+    forced = IndexJob.model_validate_json(
+        plain.model_copy(update={"force": True}).model_dump_json()
+    )
+    assert forced.force is True

@@ -164,6 +164,8 @@ class IndexJob(_Model):
     version: int
     path: str | None = None
     sha256: str | None = None
+    # Переиндексация при том же входе (D-45): не пропускать уже проиндексированный документ
+    force: bool = False
 
     @model_validator(mode="after")
     def _upsert_needs_file(self) -> Self:

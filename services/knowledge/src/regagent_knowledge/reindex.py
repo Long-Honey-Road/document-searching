@@ -9,7 +9,6 @@ from regagent_common.access import AccessLevels
 from regagent_common.contracts import IndexJob
 
 from .consumer import IndexQueue
-from .jobs import IndexRequest
 from .registry import Registry, plan_jobs
 from .settings import RuntimeSettings
 from .watcher import FolderSource, IndexPublisher
@@ -44,7 +43,7 @@ async def queue_reindex(
     if missing := [entry.file for entry in entries if entry.file not in hashes]:
         raise ValueError(f"в папке документов нет файлов: {', '.join(sorted(missing))}")
     jobs: list[IndexJob] = [
-        IndexRequest(**job.model_dump(), force=True) for job in plan_jobs(entries, hashes, ())
+        job.model_copy(update={"force": True}) for job in plan_jobs(entries, hashes, ())
     ]
     if only_failed:
         jobs += [

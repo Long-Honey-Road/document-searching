@@ -15,7 +15,7 @@ from lightrag.utils import Tokenizer
 from regagent_common.access import AccessLevels
 from regagent_common.contracts import IndexJob
 
-from .jobs import IndexRequest, JobProgress
+from .jobs import JobProgress
 from .manifest import ManifestEntry
 from .normalize import Clause, build_chunks, split_clauses
 from .okf import OkfStore
@@ -88,7 +88,7 @@ async def _upsert(
     entry, data, entries = snap
     previous = await deps.registry.get(job.doc_id)
     if previous is not None:
-        force = isinstance(job, IndexRequest) and job.force
+        force = job.force
         if not force and previous.status == "indexed" and _matches(previous, entry, job.sha256):
             return
         if not await deps.registry.transition_status(previous, "indexing"):

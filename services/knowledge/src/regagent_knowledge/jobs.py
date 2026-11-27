@@ -1,4 +1,4 @@
-"""Сообщение индексации и прогресс одной попытки."""
+"""Прогресс одной попытки индексации."""
 
 import logging
 from collections.abc import AsyncIterator
@@ -11,10 +11,6 @@ from regagent_common.contracts import IndexJob
 from .registry import DocumentRecord, Registry
 
 log = logging.getLogger(__name__)
-
-
-class IndexRequest(IndexJob):
-    force: bool = False
 
 
 @dataclass

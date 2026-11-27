@@ -13,7 +13,7 @@ from aio_pika.abc import AbstractExchange, AbstractIncomingMessage, AbstractQueu
 from pydantic import ValidationError
 from regagent_common.contracts import IndexJob
 
-from .jobs import IndexRequest, JobProgress
+from .jobs import JobProgress
 from .pipeline import PipelineDeps, process_job
 
 log = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def _attempt(job: IndexJob, deps: PipelineDeps, progress: JobProgress) -> 
 async def _process_message(message: AbstractIncomingMessage, deps: PipelineDeps) -> None:
     async with message.process(requeue=True, ignore_processed=True):
         try:
-            job = IndexRequest.model_validate_json(message.body)
+            job = IndexJob.model_validate_json(message.body)
         except ValidationError:
             log.warning("некорректное сообщение в %s", _INDEX_JOBS)
             await message.reject(requeue=False)
