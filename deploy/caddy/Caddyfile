@@ -10,6 +10,15 @@
 		-Server
 	}
 
+	# Move browser entry to the configured origin before OIDC stores PKCE state.
+	@loopbackAlias {
+		host localhost 127.0.0.1
+		path /
+		method GET HEAD
+		expression `{scheme} + "://" + {hostport} != "{$PUBLIC_BASE_URL:http://localhost:8080}"`
+	}
+	redir @loopbackAlias {$PUBLIC_BASE_URL:http://localhost:8080}{uri} 302
+
 	handle /robots.txt {
 		respond <<TXT
 			User-agent: *

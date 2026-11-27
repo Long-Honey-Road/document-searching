@@ -134,11 +134,30 @@ class Employee:
 
 
 @pytest.fixture(scope="module")
-def employees() -> dict[str, Employee]:
+def stand_config() -> tuple[dict[str, str | None], str]:
     config_file = Path(os.getenv("REGAGENT_E2E_ENV_FILE", str(ROOT / ".env")))
     config = {**dotenv_values(config_file), **os.environ}
     base = config.get("PUBLIC_BASE_URL") or "http://localhost:8080"
-    base = base.rstrip("/")
+    return config, base.rstrip("/")
+
+
+def test_loopback_alias_redirects_before_oidc(
+    stand_config: tuple[dict[str, str | None], str],
+) -> None:
+    _, base = stand_config
+    origin = urlsplit(base)
+    if origin.scheme != "http" or origin.hostname not in {"localhost", "127.0.0.1"}:
+        pytest.skip("This check requires an HTTP loopback deployment")
+    alias = "127.0.0.1" if origin.hostname == "localhost" else "localhost"
+    authority = f"{alias}:{origin.port}" if origin.port else alias
+    response = httpx.get(f"http://{authority}/?regagent=1", follow_redirects=False, timeout=10)
+    assert response.status_code == 302
+    assert response.headers["location"] == base + "/?regagent=1"
+
+
+@pytest.fixture(scope="module")
+def employees(stand_config: tuple[dict[str, str | None], str]) -> dict[str, Employee]:
+    config, base = stand_config
     issuer = config.get("KEYCLOAK_ISSUER") or base + "/auth/realms/regagent"
     audience = config.get("KEYCLOAK_AUDIENCE") or "regagent-web"
     api = base + "/api"

@@ -161,6 +161,8 @@ services:
 
   proxy:
     image: caddy:latest
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

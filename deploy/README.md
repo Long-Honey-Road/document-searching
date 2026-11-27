@@ -1,6 +1,7 @@
 # Локальный стенд
 
-Caddy публикует приложение на http://localhost:8080. Postgres, RabbitMQ, Keycloak,
+Caddy публикует приложение на http://localhost:8080. При открытии через
+http://127.0.0.1:8080 браузер перейдёт на адрес из `PUBLIC_BASE_URL` до входа в Keycloak. Postgres, RabbitMQ, Keycloak,
 Knowledge и Backend работают во внутренней сети Compose. Внешний issuer Keycloak
 указывает на Caddy, а Backend получает ключи напрямую от Keycloak внутри сети.
 
