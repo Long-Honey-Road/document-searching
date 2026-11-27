@@ -489,3 +489,21 @@ def test_admin_review_lists_ambiguous_and_missing_links(fixture_deps: ApiDeps) -
 def test_admin_without_admin_deps_is_unavailable(fixture_deps: ApiDeps) -> None:
     with TestClient(create_app(fixture_deps)) as client:
         assert client.get("/admin/jobs", headers=HEADERS).status_code == 503
+
+
+def test_admin_retry_reports_broken_manifest_as_conflict(fixture_deps: ApiDeps) -> None:
+    class FailedRegistry(RegistryFixture):
+        async def get(self, doc_id: str) -> DocumentRecord | None:
+            record = await super().get(doc_id)
+            return replace(record, status="failed") if record else None
+
+    async def broken(doc_id: str) -> int:
+        raise ValueError("переиндексация требует валидного манифеста")
+
+    deps = replace(
+        fixture_deps, registry=FailedRegistry(), admin=AdminDeps(JobLogFixture(), broken)
+    )
+    with TestClient(create_app(deps)) as client:
+        response = client.post("/admin/jobs/j-failed/retry", headers=HEADERS)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "переиндексация требует валидного манифеста"

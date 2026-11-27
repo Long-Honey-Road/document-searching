@@ -316,7 +316,11 @@ def create_app(
         record = await current.registry.get(job.doc_id)
         if job.status != "failed" or record is None or record.status != "failed":
             raise HTTPException(status_code=409, detail="Document is not failed")
-        return RetryResponse(queued=await admin.retry(job.doc_id))
+        try:
+            queued = await admin.retry(job.doc_id)
+        except ValueError as exc:  # манифест или папка документов не позволяют повтор
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RetryResponse(queued=queued)
 
     @app.get("/admin/review")
     async def admin_review() -> AdminReview:
