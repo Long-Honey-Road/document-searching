@@ -61,6 +61,7 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, UserIdentity]]:
         ("refused", "refusal"),
         ("search_unavailable", "search_unavailable"),
         ("model_timeout", "model_timeout"),
+        ("error", "error"),
     ],
 )
 async def test_outcomes_map_to_analytics(
@@ -76,11 +77,3 @@ async def test_outcomes_map_to_analytics(
         True,
     )
     assert turn.reason == "low_confidence"
-
-
-async def test_generic_error_is_not_recorded_until_analytics_supports_it(
-    recorded: list[tuple[Any, UserIdentity]],
-) -> None:
-    with pytest.raises(ValueError, match="error"):
-        await QcTurnSink().record(report("error"), IDENTITY)
-    assert not recorded

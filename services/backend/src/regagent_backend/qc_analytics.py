@@ -35,6 +35,7 @@ Outcome = Literal[
     "search_unavailable",
     "model_timeout",
     "refusal",
+    "error",  # сбой хода, не таймаут модели (D-54)
 ]
 UNANSWERED: tuple[Outcome, ...] = (
     "empty_search",
@@ -43,6 +44,7 @@ UNANSWERED: tuple[Outcome, ...] = (
     "access_limited",
     "search_unavailable",
     "model_timeout",
+    "error",
 )
 
 

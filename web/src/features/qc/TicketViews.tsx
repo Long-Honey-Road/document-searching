@@ -166,6 +166,7 @@ const recheckLabels = {
   new_version: 'Новая редакция',
   access_changed: 'Изменился доступ',
   deleted: 'Документ удалён',
+  content_changed: 'Изменился текст',
 }
 
 function Review({ token, ticket, onChange }: {

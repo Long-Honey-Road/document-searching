@@ -16,6 +16,7 @@ export const outcomeLabels = {
   search_unavailable: 'Поиск недоступен',
   model_timeout: 'Таймаут модели',
   refusal: 'Отказ',
+  error: 'Сбой',
 }
 export type Outcome = keyof typeof outcomeLabels
 
@@ -33,7 +34,7 @@ export type ReviewTicket = ReviewSummary & {
   comment: string | null
   draft: Draft | null
   history: { status: TicketStatus; actor_id: string; at: string; error_code: string | null }[]
-  recheck: { reason: 'new_version' | 'access_changed' | 'deleted'; doc_id: string; version: number | null } | null
+  recheck: { reason: 'new_version' | 'access_changed' | 'deleted' | 'content_changed'; doc_id: string; version: number | null } | null
 }
 export type Capabilities = { can_review: boolean; areas: string[] }
 export type AnalyticsReport = {
