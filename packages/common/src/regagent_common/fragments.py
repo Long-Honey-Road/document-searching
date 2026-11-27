@@ -49,8 +49,13 @@ class FragmentHeader:
         return self.practice_id is not None
 
 
+def is_header_value(value: str) -> bool:
+    """Можно ли записать значение в заголовок фрагмента (без пробелов, ``=``, ``⟦``, ``⟧``)."""
+    return bool(_VALUE_RE.match(value))
+
+
 def _check(name: str, value: str) -> str:
-    if not _VALUE_RE.match(value):
+    if not is_header_value(value):
         raise ValueError(f"недопустимое значение {name}={value!r} для заголовка фрагмента")
     return value
 

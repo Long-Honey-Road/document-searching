@@ -75,3 +75,11 @@ def test_unnumbered_clause_ids_are_allowed() -> None:
     h = FragmentHeader("memo", 1, "h2", "общий", "public")
     assert parse_header(format_header(h)) == h
     assert fragment_id(h) == "memo@1#h2"
+
+
+def test_is_header_value() -> None:
+    from regagent_common.fragments import is_header_value
+
+    assert is_header_value("ДИБ") and is_header_value("общий") and is_header_value("2.1.3")
+    assert not is_header_value("Дирекция ИБ")
+    assert not is_header_value("") and not is_header_value("a=b") and not is_header_value("⟧")
