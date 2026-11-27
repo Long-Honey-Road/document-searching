@@ -273,10 +273,10 @@ LOGIN_PAGE = (
 class FakeStand:
     """Keycloak и API за прокси: ровно то, что видит probe через loopback."""
 
-    def __init__(  # noqa: S107
+    def __init__(
         self,
         *,
-        password: str = "секрет",
+        password: str = "секрет",  # noqa: S107
         assistants: int = 1,
         threads: int = 200,
         login_status: int | None = None,
