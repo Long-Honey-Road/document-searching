@@ -1,9 +1,20 @@
+from hashlib import sha256
 from pathlib import Path
 
 import yaml
 from docx import Document
 
 from scripts.synth.generate import build_corpus
+
+
+def test_bundled_corpus_matches_generator(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    bundled = repository / "data/demo_corpus"
+    generated = tmp_path / "docs"
+    build_corpus(repository / "data/samples", generated)
+    expected = {p.name: sha256(p.read_bytes()).hexdigest() for p in bundled.iterdir()}
+    actual = {p.name: sha256(p.read_bytes()).hexdigest() for p in generated.iterdir()}
+    assert actual == expected
 
 
 def test_demo_corpus_and_revision_are_manifest_driven(tmp_path: Path) -> None:
@@ -23,7 +34,9 @@ def test_demo_corpus_and_revision_are_manifest_driven(tmp_path: Path) -> None:
     manifest = build_corpus(samples_dir, docs_dir, revision=1)
     contents = yaml.safe_load(manifest.read_bytes())
     documents = {entry["doc_id"]: entry for entry in contents["documents"]}
-    assert len(documents) == 7
+    assert len(documents) == 24
+    assert "license-return" in documents
+    assert "license-key-delivery" in documents
     assert {area["code"] for area in contents["areas"]} == {"ДИБ", "ДБРЦТ", "общий"}
     assert {entry["access"] for entry in documents.values()} == {"public", "closed_fin"}
     assert documents["deal-margin-control"]["access"] == "public"
