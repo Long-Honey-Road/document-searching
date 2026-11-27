@@ -423,3 +423,30 @@ def test_signed_in_probe_can_be_switched_off(tmp_path: Path, caplog) -> None:
     assert deploy["sign_in_probe_enabled"](env) is False
     assert deploy["sign_in_probe_enabled"]({}) is True
     assert deploy["sign_in_probe_enabled"]({"RELEASE_SIGN_IN_PROBE": "on"}) is True
+
+
+def _deploy_events(root: Path) -> list[dict[str, object]]:
+    path = root / "logs" / "events.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_accepted_release_is_a_deploy_event(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"good": "a" * 40}))
+    assert deploy["activate"](state, "b" * 40, lambda sha: True, lambda: None)
+    [event] = _deploy_events(tmp_path)
+    assert (event["service"], event["event"], event["status"]) == (
+        "deploy",
+        "deploy.decision",
+        "accepted",
+    )
+    assert (event["candidate"], event["previous"]) == ("b" * 40, "a" * 40)
+    assert isinstance(event["duration_ms"], int) and event["ts"].endswith("Z")
+
+
+def test_rejected_release_and_rollback_are_deploy_events(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"good": "a" * 40}))
+    assert not deploy["activate"](state, "b" * 40, lambda sha: sha == "a" * 40, lambda: None)
+    statuses = [(event["event"], event["status"]) for event in _deploy_events(tmp_path)]
+    assert statuses == [("deploy.decision", "rejected"), ("deploy.rollback", "ok")]

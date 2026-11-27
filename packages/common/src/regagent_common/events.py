@@ -130,16 +130,19 @@ class EventLog:
     @contextmanager
     def timed(self, event: str, **fields: Value) -> Iterator[dict[str, Value]]:
         """Событие с длительностью блока. В словарь можно дописать поля и ``status``;
-        исключение даёт ``status=error`` и ``error_code`` — имя класса, и пробрасывается."""
+        исключение даёт ``error_code`` — имя класса — и ``status=error``, если вызывающий не
+        выставил свой, и пробрасывается."""
         extra: dict[str, Value] = dict(fields)
         started = time.perf_counter()
         try:
             yield extra
         except BaseException as exc:
-            extra.pop("status", None)
+            # Вызывающий мог уже отметить исход (например, 404 → not_found)
+            failed = str(extra.pop("status", "error"))
+            extra.pop("error_code", None)
             self.emit(
                 event,
-                status="error",
+                status=failed,
                 duration_ms=(time.perf_counter() - started) * 1000,
                 error_code=type(exc).__name__,
                 **extra,

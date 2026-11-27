@@ -127,6 +127,7 @@ async def _process_message(message: AbstractIncomingMessage, deps: PipelineDeps)
                     job, status, attempt, error=error, steps=progress.steps
                 )
                 progress.event("job", "failed", monotonic() - start)
+                progress.emit_result(status, monotonic() - start, type(exc).__name__)
                 log.warning("задача %s, попытка %d: %s", job.job_id, attempt, error)
                 if exhausted:
                     await message.reject(requeue=False)
@@ -136,6 +137,7 @@ async def _process_message(message: AbstractIncomingMessage, deps: PipelineDeps)
             else:
                 await deps.registry.save_job(job, "succeeded", attempt, steps=progress.steps)
                 progress.event("job", "done", monotonic() - start)
+                progress.emit_result("succeeded", monotonic() - start)
                 return
 
 

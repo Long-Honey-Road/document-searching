@@ -119,6 +119,25 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 - имена отброшенных полей пишутся в `dropped_fields`;
 - запись события никогда не бросает исключение.
 
+Каталог событий (новые — по тем же правилам, имя `<область>.<действие>`):
+
+| Событие | Сервис | `status` | Поля |
+| --- | --- | --- | --- |
+| `turn.result` | backend | `ok`, `error` | `outcome`, `reason`, `area`, `area_source`, `searches`, `search_unavailable`, `fragments`, `sources`, `user`, `run_id`, `thread_id` |
+| `guard.classify` | backend | `ok`, `error` | `run_id`, `thread_id` |
+| `answer.generate` | backend | `ok`, `error` | `attempt`, `run_id` |
+| `answer.comparison_check` | backend | `ok`, `rejected`, `error` | `run_id` |
+| `search.tool` | backend | `ok`, `empty`, `unavailable`, `error` | `areas`, `fragments`, `low_confidence`, `areas_diverge`, `run_id` |
+| `refs.tool` | backend | `ok`, `empty`, `not_found`, `unavailable`, `error` | `doc_id`, `outgoing`, `incoming`, `run_id` |
+| `search.request` | knowledge | `ok`, `empty`, `error` | `levels` (число), `areas`, `fragments`, `low_confidence`, `areas_diverge` |
+| `clause.request`, `refs.request` | knowledge | `ok`, `empty` (refs), `not_found`, `rejected`, `error` | `doc_id`, `levels`, `http_status` |
+| `index.step` | knowledge | `ok`, `error` | `step`, `job_id`, `doc_id`, `version`, `attempt` |
+| `index.job` | knowledge | `succeeded`, `retrying`, `failed` | `job_id`, `doc_id`, `version`, `op`, `attempt`, `force` |
+| `deploy.decision` | deploy | `accepted`, `rejected` | `candidate`, `previous` (SHA) |
+| `deploy.rollback` | deploy | `ok`, `stopped`, `error` | `candidate`, `previous` |
+
+`reason` в `turn.result` — код исхода: `off_topic`, `injection`, `partial_topic`, `too_long`, `no_question`, `rate_limit`, `guard_error`, `memory_stale`, `memory_area_unclear`, `memory_remember`, `memory_forget`, `memory_unavailable`, `areas_diverge`, `empty_search`, `low_confidence`, `generation_error`, `citations_rejected`, `comparison_rejected`, `comparison_check_error`; у проверенного ответа — нет. `not_found` у `/clause` и `/refs` означает «нет документа или нет прав» — как и в ответе, без различия. События backend и knowledge пока связаны только по времени: `run_id` в knowledge не передаётся. События выкатки пишутся в `~/srv/regagent_prod/logs/events.jsonl` хоста, остальные — в stdout контейнеров.
+
 ## Переменные `.env`
 
 Адреса и модели в `CommonSettings` (`LLM_BASE_URL`, `LLM_MODEL`, `EMBEDDINGS_*`, `RERANK_BASE_URL`, `RERANK_MODEL`) обязательны и без значений по умолчанию: пустая переменная считается отсутствующей, сервис падает при старте (D-27). Для `ENV=stand` релиз дополнительно проверяет публичные адреса, `VITE_*` и заглушки (D-38).

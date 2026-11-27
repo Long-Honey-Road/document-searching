@@ -62,6 +62,7 @@ async def generate_answer(
     tools: list[BaseTool],
     identity: UserIdentity,
     max_steps: int,
+    run: dict[str, str] | None = None,
 ) -> list[AnyMessage]:
     agent = create_deep_agent(
         model,
@@ -73,7 +74,7 @@ async def generate_answer(
     # The inner graph has its own context so its states and tool outputs cannot
     # reach the public graph stream, even when the caller requests subgraphs.
     config: RunnableConfig = {
-        "configurable": {"langgraph_auth_user": identity_to_user_dict(identity)},
+        "configurable": {"langgraph_auth_user": identity_to_user_dict(identity), **(run or {})},
         "recursion_limit": max_steps,
         "tags": [TAG_NOSTREAM],
     }

@@ -87,6 +87,17 @@ async def test_timed_records_duration_and_exception(capsys: pytest.CaptureFixtur
     assert (failed["status"], failed["error_code"]) == ("error", "TimeoutError")
 
 
+def test_timed_keeps_caller_status_when_the_block_raises(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """404 из маршрута — not_found, а не error; код причины остаётся."""
+    with pytest.raises(LookupError), EventLog("knowledge").timed("clause.request") as fields:
+        fields["status"] = "not_found"
+        raise LookupError
+    [event] = _lines(capsys)
+    assert (event["status"], event["error_code"]) == ("not_found", "LookupError")
+
+
 def test_timed_status_can_be_set_by_caller(capsys: pytest.CaptureFixture[str]) -> None:
     with EventLog("backend").timed("refs.tool") as fields:
         fields["status"] = "empty"

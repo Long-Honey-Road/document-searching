@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from asyncio import create_task, gather
-from contextvars import Context
-from dataclasses import dataclass
+from contextvars import Context, ContextVar
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated, Literal, TypedDict
@@ -37,6 +38,7 @@ from regagent_backend.citations import (
     verify_citations,
     verify_comparison,
 )
+from regagent_backend.events import events, run_fields
 from regagent_backend.guard import PROMPTS, GuardResult, classify
 from regagent_backend.identity import UserIdentity, current_identity, identity_to_user_dict
 from regagent_backend.knowledge_client import KnowledgeClient
@@ -60,6 +62,18 @@ _SECOND_QUESTION = re.compile(
     r"(?<=[,;?])\s+(?:а|и)\s+(?=(?:кто|что|как|когда|где|куда|сколько|какой|какие)\b)",
     re.IGNORECASE,
 )
+
+
+@dataclass
+class TurnTrace:
+    """Что известно о ходе для события ``turn.result``: причина исхода и данные поиска."""
+
+    reason: str | None = None
+    error_code: str | None = None
+    run: SearchRun = field(default_factory=SearchRun)
+
+
+_TRACE: ContextVar[TurnTrace | None] = ContextVar("regagent_turn_trace", default=None)
 
 
 class Conversation(TypedDict):
@@ -111,7 +125,11 @@ def _reply(
     area: str | None = None,
     area_source: AreaSource = "none",
     sources: list[AnswerSource] | None = None,
+    reason: str | None = None,
 ) -> AIMessage:
+    trace = _TRACE.get()
+    if trace is not None and reason is not None:
+        trace.reason = reason
     meta = AnswerMeta(
         verified=True,
         area_used=area,
@@ -140,14 +158,18 @@ async def _memory_action(
     config: RunnableConfig,
 ) -> AIMessage:
     if len(areas) != 1:
-        return _reply("Уточните, какую область нужно запомнить или забыть.", "ask_area")
+        return _reply(
+            "Уточните, какую область нужно запомнить или забыть.",
+            "ask_area",
+            reason="memory_area_unclear",
+        )
     area = areas[0]
     tools = build_memory_tools(memory, remember_area=area)
     tool = next(tool for tool in tools if tool.name == guard.memory_action)
     await tool.ainvoke({"kind": "area", "value": area}, config=config)
     action = "Запомнил" if guard.memory_action == "remember" else "Удалил из памяти"
     log.info("user=%s memory_action=%s", identity.sub, guard.memory_action)
-    return _reply(f"{action} область «{area}».", "answer")
+    return _reply(f"{action} область «{area}».", "answer", reason=f"memory_{guard.memory_action}")
 
 
 def _reply_with_sources(
@@ -183,8 +205,12 @@ async def _answer(
     memory_line: str,
     areas: tuple[str, ...],
     area_source: AreaSource,
+    ids: dict[str, str],
 ) -> tuple[AIMessage, SearchRun]:
     run = SearchRun()
+    trace = _TRACE.get()
+    if trace is not None:
+        trace.run = run
     settings = deps.settings
     tools = build_search_tools(
         deps.knowledge,
@@ -217,7 +243,7 @@ async def _answer(
         for i, query in enumerate(queries, 1)
     ]
     tool_config: RunnableConfig = {
-        "configurable": {"langgraph_auth_user": identity_to_user_dict(identity)}
+        "configurable": {"langgraph_auth_user": identity_to_user_dict(identity), **ids}
     }
     initial_results = await gather(
         *(
@@ -226,7 +252,7 @@ async def _answer(
         ),
     )
     if not areas and any(result.areas_diverge for _, result in run.searches):
-        return _reply(ASK_AREA, "ask_area"), run
+        return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
     history.append(AIMessage(content="", tool_calls=calls))
     history.extend(
         ToolMessage(content=initial, tool_call_id=call["id"] or "")
@@ -234,31 +260,48 @@ async def _answer(
     )
     for attempt in range(2):
         try:
-            history = await generate_answer(
-                deps.agent_model, prompt, history, tools, identity, settings.AGENT_MAX_STEPS
-            )
+            with events.timed("answer.generate", attempt=attempt + 1, **ids):
+                history = await generate_answer(
+                    deps.agent_model,
+                    prompt,
+                    history,
+                    tools,
+                    identity,
+                    settings.AGENT_MAX_STEPS,
+                    ids,
+                )
         except (OpenAIError, GraphRecursionError) as exc:
             log.warning("answer generation failed: %s", type(exc).__name__)
+            if trace is not None:
+                trace.error_code = type(exc).__name__
             if run.searches and all(not result.fragments for _, result in run.searches):
-                return _reply(NOT_FOUND, "not_found"), run
+                return _reply(NOT_FOUND, "not_found", reason="empty_search"), run
+            reason = "generation_error"
             break
         answer = last_answer(history)
         text = public_text(answer) if answer is not None else ""
         citations = verify_citations(text, set(run.fragments))
         if not areas and any(result.areas_diverge for _, result in run.searches):
-            return _reply(ASK_AREA, "ask_area"), run
+            return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
         supported = citations.ok
+        reason = "citations_rejected"
         if supported and len(areas) > 1:
             try:
-                supported = await verify_comparison(
-                    text,
-                    [run.fragments[citation] for citation in extract_citations(text)],
-                    deps.guard_model,
-                    settings.GUARD_MODE,
-                )
+                with events.timed("answer.comparison_check", **ids) as event:
+                    supported = await verify_comparison(
+                        text,
+                        [run.fragments[citation] for citation in extract_citations(text)],
+                        deps.guard_model,
+                        settings.GUARD_MODE,
+                    )
+                    event["status"] = "ok" if supported else "rejected"
             except (OpenAIError, OutputParserException, ValueError) as exc:
                 log.warning("comparison support check failed: %s", type(exc).__name__)
+                if trace is not None:
+                    trace.error_code = type(exc).__name__
+                reason = "comparison_check_error"
                 break
+            reason = "comparison_rejected"
         if supported:
             return _reply_with_sources(text, run, areas, area_source), run
         if (
@@ -266,7 +309,10 @@ async def _answer(
             and run.searches
             and all(result.low_confidence or not result.fragments for _, result in run.searches)
         ):
-            return _reply(NOT_FOUND, "not_found"), run
+            empty = all(not result.fragments for _, result in run.searches)
+            return _reply(
+                NOT_FOUND, "not_found", reason="empty_search" if empty else "low_confidence"
+            ), run
         if attempt == 0:
             history.append(
                 HumanMessage(
@@ -277,7 +323,7 @@ async def _answer(
                     "Если данных недостаточно, сообщи об этом."
                 )
             )
-    return _reply(FALLBACK, "fallback"), run
+    return _reply(FALLBACK, "fallback", reason=reason), run
 
 
 async def _turn(
@@ -289,23 +335,35 @@ async def _turn(
 ) -> AIMessage:
     messages = state.get("messages", [])
     if not messages or not isinstance(messages[-1], HumanMessage):
-        return _reply(REFUSAL, "refusal")
+        return _reply(REFUSAL, "refusal", reason="no_question")
     questions = [message.text.strip() for message in messages if isinstance(message, HumanMessage)]
     limit = deps.settings.QUESTION_MAX_CHARS
     if not questions[-1] or len(questions[-1]) > limit:
-        return _reply(f"Задайте вопрос длиной до {limit} символов.", "refusal")
+        return _reply(f"Задайте вопрос длиной до {limit} символов.", "refusal", reason="too_long")
     questions = [question[-limit:] for question in questions[-6:]]
     awaiting = _awaiting_area(messages)
     settings = deps.settings
+    ids = run_fields(config)
     try:
-        guard = await classify(
-            deps.guard_model, questions, settings.AREA_CODES, awaiting, settings.GUARD_MODE
-        )
+        with events.timed("guard.classify", **ids):
+            guard = await classify(
+                deps.guard_model, questions, settings.AREA_CODES, awaiting, settings.GUARD_MODE
+            )
     except (OpenAIError, OutputParserException, ValueError) as exc:
         log.warning("guard failed: %s", type(exc).__name__)
-        return _reply(FALLBACK, "fallback")
+        trace = _TRACE.get()
+        if trace is not None:
+            trace.error_code = type(exc).__name__
+        return _reply(FALLBACK, "fallback", reason="guard_error")
     if guard.injection or not guard.on_topic or guard.partial_topic:
-        return _reply(REFUSAL, "refusal")
+        refusal = (
+            "injection"
+            if guard.injection
+            else "partial_topic"
+            if guard.partial_topic
+            else "off_topic"
+        )
+        return _reply(REFUSAL, "refusal", reason=refusal)
 
     allowed = set(settings.AREA_CODES)
     areas = tuple(dict.fromkeys(area for area in guard.explicit_areas if area in allowed))
@@ -319,7 +377,7 @@ async def _turn(
     )
     if guard.memory_action != "none":
         if memory is None:
-            return _reply(FALLBACK, "fallback")
+            return _reply(FALLBACK, "fallback", reason="memory_unavailable")
         return await _memory_action(memory, identity, guard, areas, config)
 
     now = datetime.now(UTC)
@@ -330,10 +388,10 @@ async def _turn(
         if recent is not None:
             areas, source = (recent.value,), "memory"
         elif records:
-            return _reply(ASK_AREA, "ask_area")
+            return _reply(ASK_AREA, "ask_area", reason="memory_stale")
 
     reply, run = await _answer(
-        deps, identity, questions, awaiting, guard.search_queries, memory_line, areas, source
+        deps, identity, questions, awaiting, guard.search_queries, memory_line, areas, source, ids
     )
     meta = AnswerMeta.model_validate(reply.additional_kwargs["answer_meta"])
     if (
@@ -355,6 +413,33 @@ async def _turn(
     return reply
 
 
+def _emit_turn(
+    trace: TurnTrace,
+    result: AIMessage,
+    identity: UserIdentity,
+    config: RunnableConfig,
+    seconds: float,
+) -> None:
+    meta = AnswerMeta.model_validate(result.additional_kwargs["answer_meta"])
+    run = trace.run
+    events.emit(
+        "turn.result",
+        status="ok",
+        duration_ms=seconds * 1000,
+        error_code=trace.error_code,
+        outcome=meta.outcome,
+        reason=trace.reason,
+        area=meta.area_used,
+        area_source=meta.area_source,
+        searches=len(run.searches),
+        search_unavailable=run.unavailable,
+        fragments=len(run.fragments),
+        sources=len(meta.sources),
+        user=identity.sub,
+        **run_fields(config),
+    )
+
+
 def build_graph(
     deps: AgentDeps | None = None, *, store: BaseStore | None = None
 ) -> CompiledStateGraph[State, None, Conversation, Conversation]:
@@ -363,12 +448,33 @@ def build_graph(
     async def agent(state: State, runtime: Runtime) -> dict[str, AIMessage]:
         config = get_config()
         identity = current_identity(config)
-        active_deps = deps or _runtime_deps()
-        if not rate_limit.allow(identity.sub, active_deps.settings.RATE_LIMIT_PER_USER_PER_MIN):
-            return {
-                "result": _reply("Лимит запросов на минуту исчерпан. Попробуйте позже.", "refusal")
-            }
-        return {"result": await _turn(active_deps, state, identity, config, runtime.store)}
+        trace = TurnTrace()
+        token = _TRACE.set(trace)
+        started = time.perf_counter()
+        try:
+            active_deps = deps or _runtime_deps()
+            if not rate_limit.allow(identity.sub, active_deps.settings.RATE_LIMIT_PER_USER_PER_MIN):
+                result = _reply(
+                    "Лимит запросов на минуту исчерпан. Попробуйте позже.",
+                    "refusal",
+                    reason="rate_limit",
+                )
+            else:
+                result = await _turn(active_deps, state, identity, config, runtime.store)
+        except BaseException as exc:
+            events.emit(
+                "turn.result",
+                status="error",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                error_code=type(exc).__name__,
+                user=identity.sub,
+                **run_fields(config),
+            )
+            raise
+        finally:
+            _TRACE.reset(token)
+        _emit_turn(trace, result, identity, config, time.perf_counter() - started)
+        return {"result": result}
 
     async def finalize(state: State) -> dict[str, object]:
         result = state.get("result")

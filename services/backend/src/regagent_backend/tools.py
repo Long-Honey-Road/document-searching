@@ -16,6 +16,7 @@ from regagent_common.contracts import (
     SearchResponse,
 )
 
+from regagent_backend.events import events, run_fields
 from regagent_backend.identity import current_identity
 from regagent_backend.knowledge_client import KnowledgeClient, KnowledgeUnavailable
 
@@ -28,6 +29,7 @@ class SearchRun:
     fragments: dict[str, Fragment] = field(default_factory=dict)
     searches: list[tuple[list[str], SearchResponse]] = field(default_factory=list)
     attempts: int = 0
+    unavailable: int = 0
 
 
 def parse_fragment_id(fragment_id: str) -> tuple[str, int, str] | None:
@@ -101,12 +103,21 @@ def build_search_tools(
         filters = list(dict.fromkeys(area for area in requested if area in allowed_areas))
         identity = current_identity(config)
         run.attempts += 1
-        try:
-            response = await client.search(
-                SearchRequest(query=query.strip(), levels=sorted(identity.levels), areas=filters)
-            )
-        except KnowledgeUnavailable:
-            return "Поиск временно недоступен."
+        with events.timed("search.tool", areas=filters, **run_fields(config)) as event:
+            try:
+                response = await client.search(
+                    SearchRequest(
+                        query=query.strip(), levels=sorted(identity.levels), areas=filters
+                    )
+                )
+            except KnowledgeUnavailable:
+                run.unavailable += 1
+                event["status"] = "unavailable"
+                return "Поиск временно недоступен."
+            event["status"] = "ok" if response.fragments else "empty"
+            event["fragments"] = len(response.fragments)
+            event["low_confidence"] = response.low_confidence
+            event["areas_diverge"] = response.areas_diverge
         run.searches.append((filters, response))
         notes = []
         if response.areas_diverge:
@@ -154,12 +165,20 @@ def build_search_tools(
         if not code or _PRACTICE_ID.fullmatch(code):
             return _NO_REFS
         identity = current_identity(config)
-        try:
-            response = await client.refs(RefsRequest(doc_id=code, levels=sorted(identity.levels)))
-        except KnowledgeUnavailable:
-            return "Поиск временно недоступен."
-        if response is None:
-            return _NO_REFS
+        with events.timed("refs.tool", doc_id=code, **run_fields(config)) as event:
+            try:
+                response = await client.refs(
+                    RefsRequest(doc_id=code, levels=sorted(identity.levels))
+                )
+            except KnowledgeUnavailable:
+                event["status"] = "unavailable"
+                return "Поиск временно недоступен."
+            if response is None:
+                # Документа нет или нет прав — для журнала так же неразличимо, как для модели
+                event["status"] = "not_found"
+                return _NO_REFS
+            event["outgoing"], event["incoming"] = len(response.outgoing), len(response.incoming)
+            event["status"] = "ok" if response.outgoing or response.incoming else "empty"
         return _show_refs(response.outgoing, response.incoming, result_max_chars) or _NO_REFS
 
     return [search_docs, read_clause, follow_refs]
