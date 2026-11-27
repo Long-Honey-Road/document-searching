@@ -12,6 +12,7 @@
 | Уровень | Что | Где бежит |
 | --- | --- | --- |
 | unit | нормализация, манифест, глоссарий, разбор заголовков фрагментов, проверка прав, память, проверка ссылок, нормализация вопросов | `uv run pytest` без внешних сервисов |
+| контракт между сервисами | общие очереди RabbitMQ объявляются knowledge и backend одинаково; сообщения публикации практики читаются в обе стороны (D-61) | `tests/contract`, в `uv run pytest` |
 | integration | knowledge с Postgres (pgvector + AGE) и RabbitMQ в контейнерах; backend с Postgres; поддельный LLM и эмбеддинги | `uv run pytest -m integration` (docker) |
 | e2e | весь стенд в compose, сценарии демо из `01-concept.md` через LangGraph SDK | `uv run pytest -m e2e`, перед демо и по запросу |
 | leak | тесты из `07-security.md` | в integration и e2e, всегда в CI |
