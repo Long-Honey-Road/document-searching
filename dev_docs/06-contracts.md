@@ -93,14 +93,14 @@ web заменяет `[f:...]` на номера `[1]` по `sources`.
 
 ## Память
 
-Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значение `{kind, value, source, confirmed_at, times_confirmed}`.
+Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значение `{kind, value, source, confirmed_at, times_confirmed}`. Ключ `signals:area` — `{"history": [{run_id, area, at}]}`, последние 20 прямых указаний области (D-55).
 
 ## backend HTTP (свои маршруты)
 
 | Метод | Путь | Роль | Что делает |
 | --- | --- | --- | --- |
-| GET | `/me/memory` | любой | `{"records": [...]}`: свои записи с полем `key` |
-| DELETE | `/me/memory/{key}` | любой | удалить свою запись, `204` также при её отсутствии |
+| GET | `/me/memory` | любой | `{"records": [...], "signals": [{area, at}], "progress": {current, current_confirmed_at, days_until_stale, pending_area, pending_count, pending_needed}}`: свои записи с полем `key`, указания области без `run_id` и счёт до записи или смены (D-55) |
+| DELETE | `/me/memory/{key}` | любой | удалить свою запись (`area:<код>`, вместе с её сигналами) или все сигналы (`signals:area`), `204` также при отсутствии |
 | GET | `/me/notifications` | любой | уведомления |
 | POST | `/feedback` | любой | `{thread_id, message_id, kind: "contradiction"|"missing", comment}` → элемент ОКК |
 | GET | `/qc/clusters` | qc | очередь |
@@ -150,6 +150,9 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `clause.request`, `refs.request` | knowledge | `ok`, `empty` (refs), `not_found`, `rejected`, `error` | `doc_id`, `levels`, `http_status` |
 | `index.step` | knowledge | `ok`, `error` | `step`, `job_id`, `doc_id`, `version`, `attempt` |
 | `index.job` | knowledge | `succeeded`, `retrying`, `failed` | `job_id`, `doc_id`, `version`, `op`, `attempt`, `force` |
+| `memory.area` | backend | `pending`, `remembered`, `confirmed`, `switched`, `duplicate` | `area`, `count`, `needed`, `area_source`, `run_id` |
+| `memory.expired` | backend | `ok` | `areas` — удалённые устаревшие области, `run_id` |
+| `turn.report` | backend | `ok`, `error` | `outcome`, `run_id` — запись итога хода в аналитику ОКК (D-54) |
 | `llm.usage` | backend, knowledge | `ok`, `timeout`, `error` | `operation` (`guard`, `comparison_check`, `answer` в backend; `index`, `keywords`, `embedding` в knowledge), `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens`, `usage_source` (`provider` / `unknown`), `items` (эмбеддинги), `run_id` или `job_id` |
 | `deploy.decision` | deploy | `accepted`, `rejected` | `candidate`, `previous` (SHA) |
 | `deploy.rollback` | deploy | `ok`, `stopped`, `error` | `candidate`, `previous` |
@@ -205,6 +208,7 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `AGENT_MAX_STEPS` | предел шагов Deep Agent | `12` |
 | `AGENT_MAX_SEARCHES`, `TOOL_RESULT_MAX_CHARS` | поисков на один ответ; текста фрагментов модели за один поиск, символов (D-24) | `3`, `12000` |
 | `MEMORY_AREA_TTL_DAYS`, `MEMORY_MAX_ACTIVE_AREAS` | память | `14`, `3` |
+| `MEMORY_AREA_SIGNALS_TO_REMEMBER`, `MEMORY_AREA_SIGNALS_TO_SWITCH`, `MEMORY_AREA_SIGNAL_WINDOW_DAYS` | прямых указаний области до записи в пустую память, подряд до смены области, окно учёта в днях (D-55) | `2`, `3`, `14` |
 | `QUESTION_MAX_CHARS`, `RATE_LIMIT_PER_USER_PER_MIN` | лимиты | `2000`, `20` |
 | `QC_CLUSTER_SIMILARITY`, `QC_NOTIFY_TO` | ОКК | `0.85`, `qc@example.org` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | почта | |

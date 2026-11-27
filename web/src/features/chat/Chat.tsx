@@ -2,6 +2,7 @@ import { Client, type Message, type Thread } from '@langchain/langgraph-sdk'
 import { useStream } from '@langchain/langgraph-sdk/react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { MemoryPanel } from '../memory/MemoryPanel'
 import { Answer, type AnswerMeta } from './Answer'
 import { classifyError, problemText, type ChatProblem } from './errors'
 
@@ -114,10 +115,12 @@ function Conversation({
 }
 
 export function Chat({ token, onUnauthorized }: { token: string; onUnauthorized: () => void }) {
+  const apiUrl = new URL(import.meta.env.VITE_API_URL || '/api', window.location.origin).href
   const client = useMemo(() => new Client({
-    apiUrl: new URL(import.meta.env.VITE_API_URL || '/api', window.location.origin).href,
+    apiUrl,
     defaultHeaders: { Authorization: 'Bearer ' + token },
-  }), [token])
+  }), [apiUrl, token])
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const [assistantId, setAssistantId] = useState<string>(import.meta.env.VITE_ASSISTANT_ID ?? '')
   const [threadId, setThreadId] = useState<string | null>(null)
   const [threads, setThreads] = useState<Thread[]>([])
@@ -148,6 +151,14 @@ export function Chat({ token, onUnauthorized }: { token: string; onUnauthorized:
     <div className="grid gap-8 sm:grid-cols-[12rem_minmax(0,1fr)]">
       <nav aria-label="Диалоги" className="space-y-3">
         <Button variant="outline" onClick={() => setThreadId(null)}>Новый диалог</Button>
+        <Button
+          variant={memoryOpen ? 'secondary' : 'ghost'}
+          aria-expanded={memoryOpen}
+          onClick={() => setMemoryOpen((open) => !open)}
+        >
+          Память
+        </Button>
+        {memoryOpen && <MemoryPanel apiUrl={apiUrl} token={token} refreshKey={threadUpdates} />}
         <ul className="space-y-1">
           {threads.map((thread) => (
             <li key={thread.thread_id}>

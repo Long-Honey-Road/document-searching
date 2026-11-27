@@ -123,3 +123,12 @@ def test_proxy_hides_keycloak_admin_console() -> None:
     lines = [line.strip() for line in auth.splitlines()]
     assert "respond @keycloakAdmin 404" in lines
     assert lines.index("respond @keycloakAdmin 404") < lines.index("reverse_proxy keycloak:8080")
+
+
+def test_backend_receives_every_setting() -> None:
+    """Как и для knowledge: настройка без строки в compose на стенде не меняется."""
+    from regagent_backend.settings import BackendSettings
+
+    env = yaml.safe_load(COMPOSE.read_text())["services"]["backend"]["environment"]
+    missing = sorted({name.upper() for name in BackendSettings.model_fields} - env.keys())
+    assert not missing, f"нет в environment backend: {missing}"

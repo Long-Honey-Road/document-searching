@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated, Literal, Protocol, TypedDict
+from uuid import uuid4
 
 import httpx
 from langchain_core.exceptions import OutputParserException
@@ -42,7 +43,7 @@ from regagent_backend.events import events, run_fields
 from regagent_backend.guard import PROMPTS, GuardResult, classify
 from regagent_backend.identity import UserIdentity, current_identity, identity_to_user_dict
 from regagent_backend.knowledge_client import KnowledgeClient
-from regagent_backend.memory import MemoryService, build_memory_tools
+from regagent_backend.memory import MemoryService, build_memory_tools, memory_service
 from regagent_backend.rate_limit import AccountRateLimit
 from regagent_backend.settings import BackendSettings
 from regagent_backend.tools import SearchRun, build_search_tools
@@ -386,13 +387,7 @@ async def _turn(
     allowed = set(settings.AREA_CODES)
     areas = tuple(dict.fromkeys(area for area in guard.explicit_areas if area in allowed))
     source: AreaSource = ("asked" if awaiting else "question") if areas else "none"
-    memory = (
-        MemoryService(
-            store, allowed, settings.MEMORY_MAX_ACTIVE_AREAS, settings.MEMORY_AREA_TTL_DAYS
-        )
-        if store is not None
-        else None
-    )
+    memory = memory_service(store, settings) if store is not None else None
     if guard.memory_action != "none":
         if memory is None:
             return _reply(FALLBACK, "fallback", reason="memory_unavailable")
@@ -406,6 +401,9 @@ async def _turn(
         if recent is not None:
             areas, source = (recent.value,), "memory"
         elif records:
+            # Для демо устаревшая память равна удалённой: переспросить один раз и забыть
+            expired = await memory.purge_stale(identity.sub, now)
+            events.emit_fields("memory.expired", {"areas": expired, **ids}, status="ok")
             return _reply(ASK_AREA, "ask_area", reason="memory_stale")
 
     reply, run = await _answer(
@@ -419,8 +417,20 @@ async def _turn(
         and len(areas) == 1
         and any(filters == list(areas) for filters, _ in run.searches)
     ):
-        await memory.remember(
-            identity.sub, "area", areas[0], "confirmed" if source == "asked" else "stated"
+        # Прямое указание области — сигнал; запись и смена — по правилам D-55
+        decision = await memory.observe(
+            identity.sub, ids.get("run_id") or uuid4().hex, areas[0], datetime.now(UTC)
+        )
+        events.emit_fields(
+            "memory.area",
+            {
+                "area": decision.area,
+                "count": decision.count,
+                "needed": decision.needed,
+                "area_source": source,
+                **ids,
+            },
+            status=decision.status,
         )
     log.info(
         "user=%s outcome=%s fragments=%s",

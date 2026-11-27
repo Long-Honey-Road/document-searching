@@ -201,6 +201,13 @@ async def test_clarification_semantic_area_memory_and_tool_allowlist(stand: Any)
     assert "каждое утверждение" in prompt.lower()
     assert "closed_fin" not in prompt
 
+    # Один сигнал (ответ на уточнение) ещё не память: нужен второй (D-55)
+    model.responses = [guard()]
+    unscoped = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
+    assert meta(unscoped["messages"][-1]).outcome == "ask_area"
+    model.responses = [guard("ДИБ"), search(), answer]
+    await graph.ainvoke({"messages": [("human", "Кто назначает РП в ДИБ?")]}, config=CONFIG)
+
     model.responses = [guard(), search(), answer]
     remembered = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
     assert meta(remembered["messages"][-1]).area_source == "memory"

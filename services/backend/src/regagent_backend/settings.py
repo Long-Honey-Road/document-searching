@@ -34,6 +34,10 @@ class BackendSettings(BaseSettings):
     RATE_LIMIT_PER_USER_PER_MIN: int = Field(default=20, ge=1)
     MEMORY_MAX_ACTIVE_AREAS: int = Field(default=3, ge=1)
     MEMORY_AREA_TTL_DAYS: int = Field(default=14, ge=1)
+    # D-55: прямых указаний области до записи в пустую память и подряд — до смены области
+    MEMORY_AREA_SIGNALS_TO_REMEMBER: int = Field(default=2, ge=1)
+    MEMORY_AREA_SIGNALS_TO_SWITCH: int = Field(default=3, ge=1)
+    MEMORY_AREA_SIGNAL_WINDOW_DAYS: int = Field(default=14, ge=1)
     GUARD_MODE: Literal["json_schema", "tool"] = "json_schema"
 
     @field_validator("AREA_CODES", mode="before")

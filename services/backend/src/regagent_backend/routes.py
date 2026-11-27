@@ -12,7 +12,7 @@ from regagent_common.contracts import AdminDocuments, AdminJobs, AdminReview, Re
 
 from regagent_backend import knowledge_client
 from regagent_backend.knowledge_client import KnowledgeClient, KnowledgeUnavailable
-from regagent_backend.memory import MemoryService
+from regagent_backend.memory import MemoryService, memory_service
 from regagent_backend.settings import BackendSettings
 
 ADMIN_ROLE = "admin"
@@ -29,24 +29,24 @@ async def _authenticated_sub(request: Request) -> str:
 
 
 def _memory() -> MemoryService:
-    settings = BackendSettings()
-    return MemoryService(
-        db_manager.get_store(),
-        set(settings.AREA_CODES),
-        max_active=settings.MEMORY_MAX_ACTIVE_AREAS,
-        ttl_days=settings.MEMORY_AREA_TTL_DAYS,
-    )
+    return memory_service(db_manager.get_store(), BackendSettings())
 
 
 @app.get("/me/memory")
 async def list_memory(
     sub: Annotated[str, Depends(_authenticated_sub)],
-) -> dict[str, list[dict[str, object]]]:
+) -> dict[str, object]:
+    memory = _memory()
     return {
         "records": [
             {"key": record.key, **record.model_dump(mode="json")}
-            for record in await _memory().load(sub)
-        ]
+            for record in await memory.load(sub)
+        ],
+        # Прямые указания области и счёт до записи или смены (D-55); run_id не отдаём
+        "signals": [
+            {"area": area, "at": at.isoformat()} for area, at in await memory.area_signals(sub)
+        ],
+        "progress": (await memory.progress(sub)).model_dump(mode="json"),
     }
 
 
