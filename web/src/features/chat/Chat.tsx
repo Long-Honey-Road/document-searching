@@ -3,6 +3,7 @@ import { useStream } from '@langchain/langgraph-sdk/react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Answer, type AnswerMeta } from './Answer'
+import { classifyError, problemText, type ChatProblem } from './errors'
 
 type ChatState = { messages: Message[] }
 
@@ -18,14 +19,29 @@ function getAnswerMeta(message: Message): AnswerMeta | undefined {
   return candidate as AnswerMeta
 }
 
+function ProblemAlert({ problem, onUnauthorized }: {
+  problem: ChatProblem
+  onUnauthorized: () => void
+}) {
+  return (
+    <div role="alert" className="space-y-2 text-sm text-destructive">
+      <p>{problemText(problem)}</p>
+      {problem.kind === 'unauthorized' && (
+        <Button variant="outline" onClick={onUnauthorized}>Войти снова</Button>
+      )}
+    </div>
+  )
+}
+
 function Conversation({
-  client, assistantId, threadId, setThreadId, reloadThreads,
+  client, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized,
 }: {
   client: Client
   assistantId: string
   threadId: string | null
   setThreadId: (id: string) => void
   reloadThreads: () => void
+  onUnauthorized: () => void
 }) {
   const stream = useStream<ChatState>({
     client,
@@ -36,7 +52,7 @@ function Conversation({
     onFinish: reloadThreads,
   })
   const [question, setQuestion] = useState('')
-  const [sendError, setSendError] = useState(false)
+  const [sendError, setSendError] = useState<ChatProblem | null>(null)
   const messages = stream.messages.filter((message) =>
     message.type === 'human' ||
     (message.type === 'ai' && Boolean(getAnswerMeta(message))),
@@ -49,13 +65,13 @@ function Conversation({
     event.preventDefault()
     const content = question.trim()
     if (!content || stream.isLoading) return
-    setSendError(false)
+    setSendError(null)
     setQuestion('')
     try {
       await stream.submit({ messages: [{ type: 'human', content }] })
-    } catch {
+    } catch (error) {
       setQuestion(content)
-      setSendError(true)
+      setSendError(classifyError(error))
     }
   }
 
@@ -75,8 +91,11 @@ function Conversation({
       </div>
       {draft && <Answer text={draft} />}
       {stream.isLoading && <p role="status" className="text-sm text-muted-foreground">Ищу в регламентах…</p>}
-      {(sendError || Boolean(stream.error)) && (
-        <p role="alert" className="text-sm text-destructive">Не удалось получить ответ. Попробуйте ещё раз.</p>
+      {(sendError ?? (stream.error ? classifyError(stream.error) : null)) && (
+        <ProblemAlert
+          problem={sendError ?? classifyError(stream.error)}
+          onUnauthorized={onUnauthorized}
+        />
       )}
       <form onSubmit={(event) => void submit(event)} className="flex flex-col items-start gap-3 sm:flex-row sm:items-end">
         <label className="grid w-full gap-1.5 text-sm font-medium">
@@ -94,7 +113,7 @@ function Conversation({
   )
 }
 
-export function Chat({ token }: { token: string }) {
+export function Chat({ token, onUnauthorized }: { token: string; onUnauthorized: () => void }) {
   const client = useMemo(() => new Client({
     apiUrl: new URL(import.meta.env.VITE_API_URL || '/api', window.location.origin).href,
     defaultHeaders: { Authorization: 'Bearer ' + token },
@@ -102,7 +121,7 @@ export function Chat({ token }: { token: string }) {
   const [assistantId, setAssistantId] = useState<string>(import.meta.env.VITE_ASSISTANT_ID ?? '')
   const [threadId, setThreadId] = useState<string | null>(null)
   const [threads, setThreads] = useState<Thread[]>([])
-  const [loadingError, setLoadingError] = useState(false)
+  const [problem, setProblem] = useState<ChatProblem | null>(null)
   const [threadUpdates, setThreadUpdates] = useState(0)
   const reloadThreads = () => setThreadUpdates((count) => count + 1)
 
@@ -112,8 +131,8 @@ export function Chat({ token }: { token: string }) {
     void client.assistants.search({ limit: 2 }).then((assistants) => {
       if (!active) return
       if (assistants.length === 1) setAssistantId(assistants[0].assistant_id)
-      else setLoadingError(true)
-    }).catch(() => { if (active) setLoadingError(true) })
+      else setProblem({ kind: assistants.length === 0 ? 'no_assistant' : 'many_assistants' })
+    }).catch((error: unknown) => { if (active) setProblem(classifyError(error)) })
     return () => { active = false }
   }, [assistantId, client])
 
@@ -121,7 +140,7 @@ export function Chat({ token }: { token: string }) {
     let active = true
     void client.threads.search({ sortBy: 'updated_at', sortOrder: 'desc' }).then((items) => {
       if (active) setThreads(items)
-    }).catch(() => { if (active) setLoadingError(true) })
+    }).catch((error: unknown) => { if (active) setProblem(classifyError(error)) })
     return () => { active = false }
   }, [client, threadUpdates])
 
@@ -140,10 +159,10 @@ export function Chat({ token }: { token: string }) {
         </ul>
       </nav>
       <div className="min-w-0 space-y-3">
-        {loadingError && <p role="alert" className="text-sm text-destructive">Не удалось загрузить данные чата.</p>}
+        {problem && <ProblemAlert problem={problem} onUnauthorized={onUnauthorized} />}
         {assistantId ? (
-          <Conversation {...{ client, assistantId, threadId, setThreadId, reloadThreads }} />
-        ) : !loadingError && (
+          <Conversation {...{ client, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized }} />
+        ) : !problem && (
           <p role="status" className="text-sm text-muted-foreground">Подключаюсь к агенту…</p>
         )}
       </div>

@@ -44,7 +44,13 @@ export default function App() {
       {actionError && <p className="text-sm text-destructive" role="alert">{actionError}</p>}
       {auth.user?.access_token && (
         <Suspense fallback={<p role="status">Загружаю чат…</p>}>
-          <Chat token={auth.user.access_token} />
+          <Chat
+            token={auth.user.access_token}
+            onUnauthorized={() => {
+              setActionError(undefined)
+              void auth.signinRedirect().catch(() => setActionError('Не удалось начать вход.'))
+            }}
+          />
         </Suspense>
       )}
     </main>
