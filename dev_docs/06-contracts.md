@@ -47,6 +47,8 @@
 
 Пока служебная часть не готова (старт knowledge), `/admin/*` отвечает 503. `GET /health` — без токена.
 
+Для фрагмента практики `Fragment.practice` содержит `mode` и `binds: [{doc_id, version, clause}]`. У фрагмента регламента поле отсутствует.
+
 ## RabbitMQ
 
 Exchange `regagent` (topic). Все сообщения — JSON с полями `message_id`, `created_at`, `type`.
@@ -54,9 +56,9 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 | Ключ / очередь | Кто пишет | Кто читает | Тело |
 | --- | --- | --- | --- |
 | `index.jobs` | knowledge.watcher, knowledge.reindex | knowledge.consumer | `{job_id, op: "upsert"\|"delete", doc_id, version, path, sha256}`. У `delete` `path` и `sha256` необязательны (D-26). `force` (по умолчанию `false`) — поле `IndexJob` в `regagent_common`: переиндексация ставит `true` у `upsert` (D-45), обработчик тогда не пропускает уже проиндексированный документ. |
-| `practice.publish` | backend (ОКК) | knowledge.consumer | `{practice_id, text, binds: [{doc_id, clause}], mode, areas, verified: {by, at}, source_cluster_id}` |
-| `practice.published` | knowledge | backend | `{practice_id, source_cluster_id, status: "indexed"|"failed", error}` |
-| `qc.events` | knowledge | backend | `{kind: "recheck", reason: "new_version"|"deleted", doc_id, practice_ids: [...]}` |
+| `practice.publish` | backend (ОКК) | knowledge.consumer | `PracticePublish`: `ticket_id, practice_id, revision, text, binds: [{doc_id, version, clause}], mode, approved_by, approved_levels` |
+| `practice.published` | knowledge | backend | `PracticePublicationResult`: `ticket_id, practice_id, revision, status, error_code`. Успех — `published`, отказ — `failed` с кодом. |
+| `qc.events` | knowledge | backend | `PracticeRecheck`: `kind=recheck, ticket_id, practice_id, revision, doc_id, reason`. Причины: `new_version`, `deleted`, `access_changed`, `content_changed`. Повтор доставки сохраняет тот же `message_id`. |
 
 Очередь ошибок `regagent.dlq`; до 3 повторов с паузой; обработчики идемпотентны.
 

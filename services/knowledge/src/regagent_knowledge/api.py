@@ -45,6 +45,7 @@ from .settings import (
 if TYPE_CHECKING:
     from .normalize import Clause
 from .okf import ClauseView, RegulationView
+from .practice import PracticeService
 
 
 class DocumentAccess(Protocol):
@@ -90,6 +91,7 @@ class ApiDeps:
     rerank_candidate_limit: int = DEFAULT_RERANK_CANDIDATE_LIMIT
     rerank_text_max_chars: int = DEFAULT_RERANK_TEXT_MAX_CHARS
     admin: AdminDeps | None = None
+    practices: PracticeService | None = None
 
 
 def _deps(app: FastAPI) -> ApiDeps:
@@ -263,6 +265,9 @@ def create_app(
                 default_top_k=current.search_top_k,
                 registry_snapshot=current.registry.all,
                 indexed_clauses=read_indexed_clauses,
+                practice_lookup=current.practices.visible
+                if current.practices is not None
+                else None,
                 rerank_candidate_limit=current.rerank_candidate_limit,
                 rerank_text_max_chars=current.rerank_text_max_chars,
             )

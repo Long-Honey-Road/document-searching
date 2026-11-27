@@ -8,11 +8,30 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .fragments import Mode, is_header_value
+
 FragmentKind = Literal["regulation", "practice"]
 
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class PracticeBinding(_Model):
+    doc_id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    version: int = Field(ge=1)
+    clause: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _valid_clause(self) -> Self:
+        if not is_header_value(self.clause):
+            raise ValueError("некорректный номер пункта")
+        return self
+
+
+class PracticeSource(_Model):
+    mode: Mode
+    binds: list[PracticeBinding] = Field(min_length=1)
 
 
 # --- knowledge API ---
@@ -28,6 +47,7 @@ class Fragment(_Model):
     kind: FragmentKind
     text: str
     score: float
+    practice: PracticeSource | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class SearchRequest(_Model):
@@ -150,6 +170,51 @@ def _new_id() -> str:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+class PracticePublish(_Model):
+    message_id: str = Field(default_factory=_new_id)
+    created_at: datetime = Field(default_factory=_now)
+    type: Literal["practice.publish"] = "practice.publish"
+    ticket_id: str = Field(min_length=1)
+    practice_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$")
+    revision: int = Field(ge=1)
+    text: str = Field(min_length=1)
+    binds: list[PracticeBinding] = Field(min_length=1, max_length=16)
+    mode: Mode
+    approved_by: str = Field(min_length=1)
+    approved_levels: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _valid_content(self) -> Self:
+        if not self.text.strip() or "\x00" in self.text:
+            raise ValueError("пояснение пустое или содержит NUL")
+        if len({(b.doc_id, b.version, b.clause) for b in self.binds}) != len(self.binds):
+            raise ValueError("повторяющиеся привязки")
+        return self
+
+
+class PracticePublicationResult(_Model):
+    message_id: str = Field(default_factory=_new_id)
+    created_at: datetime = Field(default_factory=_now)
+    type: Literal["practice.published"] = "practice.published"
+    ticket_id: str
+    practice_id: str
+    revision: int
+    status: Literal["published", "failed"]
+    error_code: str | None = None
+
+
+class PracticeRecheck(_Model):
+    message_id: str
+    created_at: datetime = Field(default_factory=_now)
+    type: Literal["qc.events"] = "qc.events"
+    kind: Literal["recheck"] = "recheck"
+    ticket_id: str
+    practice_id: str
+    revision: int
+    doc_id: str
+    reason: Literal["new_version", "deleted", "access_changed", "content_changed"]
 
 
 class IndexJob(_Model):
