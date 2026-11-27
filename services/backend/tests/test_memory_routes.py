@@ -153,3 +153,17 @@ async def test_memory_shows_progress_and_signals_and_signals_can_be_cleared(
     assert (await client.delete(path, headers=alice)).status_code == 204
     cleared = (await client.get("/me/memory", headers=alice)).json()
     assert cleared["signals"] == [] and cleared["progress"]["pending_area"] is None
+
+
+async def test_qc_access_comes_from_the_aegra_identity(
+    client: httpx.AsyncClient, make_token: MakeToken
+) -> None:
+    guest = await client.get("/qc/me")
+    assert guest.status_code == 401
+    employee = await client.get("/qc/me?role=admin", headers=_bearer(make_token(sub="alice")))
+    assert employee.status_code == 200 and employee.json()["can_review"] is False
+    reviewer = await client.get(
+        "/qc/me", headers=_bearer(make_token(sub="admin", realm_access={"roles": ["admin"]}))
+    )
+    assert reviewer.status_code == 200 and reviewer.json()["can_review"] is True
+    assert reviewer.json()["areas"] == ["ДИБ", "ДБРЦТ", "общий"]

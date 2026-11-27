@@ -38,6 +38,8 @@ class BackendSettings(BaseSettings):
     MEMORY_AREA_SIGNALS_TO_REMEMBER: int = Field(default=2, ge=1)
     MEMORY_AREA_SIGNALS_TO_SWITCH: int = Field(default=3, ge=1)
     MEMORY_AREA_SIGNAL_WINDOW_DAYS: int = Field(default=14, ge=1)
+    RABBITMQ_URL: SecretStr = SecretStr("")
+    AUDIT_RETENTION_DAYS: int = Field(default=90, ge=1, le=3650)
     GUARD_MODE: Literal["json_schema", "tool"] = "json_schema"
 
     @field_validator("AREA_CODES", mode="before")

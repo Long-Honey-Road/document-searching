@@ -149,12 +149,12 @@ services:
       POSTGRES_PASSWORD: ${APP_DB_PASSWORD}
       AEGRA_CONFIG: /app/services/backend/aegra.json
       AUTH_TYPE: custom
+      ENV_MODE: ${ENV:-dev}
       SERVER_URL: ${PUBLIC_BASE_URL}/api
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
       KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE}
       KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-http://keycloak:8080/auth/realms/regagent/protocol/openid-connect/certs}
       KNOWLEDGE_URL: ${KNOWLEDGE_URL}
-      AGENT_ESCALATE_AFTER: ${AGENT_ESCALATE_AFTER}
       AGENT_MAX_STEPS: ${AGENT_MAX_STEPS}
       GUARD_MODE: ${GUARD_MODE:-json_schema}
       MEMORY_AREA_TTL_DAYS: ${MEMORY_AREA_TTL_DAYS}
@@ -165,7 +165,8 @@ services:
       MEMORY_AREA_SIGNAL_WINDOW_DAYS: ${MEMORY_AREA_SIGNAL_WINDOW_DAYS:-14}
       QUESTION_MAX_CHARS: ${QUESTION_MAX_CHARS}
       RATE_LIMIT_PER_USER_PER_MIN: ${RATE_LIMIT_PER_USER_PER_MIN}
-      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-90}
       # Параметры агента 2 (D-20, D-24) и кэш ключей Keycloak — со значениями по умолчанию
       AREA_CODES: ${AREA_CODES:-ДИБ,ДБРЦТ,общий}
       KNOWLEDGE_TIMEOUT_S: ${KNOWLEDGE_TIMEOUT_S:-30}
