@@ -11,4 +11,4 @@ RUN apt-get update \
  && rm -rf /tmp/age \
  && apt-get purge -y build-essential git flex bison postgresql-server-dev-${PG_MAJOR} \
  && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-COPY init/ /docker-entrypoint-initdb.d/
+COPY --chmod=755 init/ /docker-entrypoint-initdb.d/

@@ -73,6 +73,16 @@ def run(*args: str, cwd: Path, capture: bool = False) -> str:
     return result.stdout or ""
 
 
+def make_source_readable(path: Path) -> None:
+    for directory, _, files in os.walk(path):
+        Path(directory).chmod(0o755)
+        for name in files:
+            file = Path(directory) / name
+            if not file.is_symlink():
+                mode = 0o755 if file.stat().st_mode & 0o100 else 0o644
+                file.chmod(mode)
+
+
 class Deployment:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -111,6 +121,7 @@ class Deployment:
         run("git", "archive", "--output", str(archive), release, cwd=self.source)
         run("tar", "-xf", str(archive), "-C", str(path), cwd=self.root)
         archive.unlink()
+        make_source_readable(path)
 
         for command in (
             ("uv", "lock", "--check"),

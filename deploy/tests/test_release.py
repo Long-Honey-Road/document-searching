@@ -45,3 +45,17 @@ def test_first_failed_release_is_stopped_without_rollback_target(tmp_path):
     assert not deploy["activate"](state, "A", lambda _: False, lambda: stopped.append(True))
     assert stopped == [True]
     assert deploy["read_state"](state) == {"rejected": "A"}
+
+
+def test_release_source_is_readable_by_service_users(tmp_path):
+    source = tmp_path / "release"
+    source.mkdir(mode=0o700)
+    child = source / "config"
+    child.mkdir(mode=0o700)
+    config = child / "realm.json"
+    config.write_text("{}")
+    config.chmod(0o600)
+    deploy["make_source_readable"](source)
+    assert source.stat().st_mode & 0o777 == 0o755
+    assert child.stat().st_mode & 0o777 == 0o755
+    assert config.stat().st_mode & 0o777 == 0o644
