@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 from datetime import date
 from io import BytesIO
@@ -82,6 +83,9 @@ SYNTHETIC_DOCUMENTS = [
         ],
     ),
 ]
+EXPANDED_DOCUMENTS = json.loads(
+    (Path(__file__).with_name("expanded_regulations.json")).read_text(encoding="utf-8")
+)["documents"]
 
 
 def save_if_changed(path: Path, contents: bytes) -> None:
@@ -160,6 +164,15 @@ def build_corpus(samples_dir: Path, docs_dir: Path, revision: int = 1) -> Path:
             title, [paragraph.format(deadline=deadline) for paragraph in paragraphs]
         )
         add_document(stem, title, "общий", access, contents, version)
+
+    for item in EXPANDED_DOCUMENTS:
+        add_document(
+            item["id"],
+            item["title"],
+            item["area"],
+            "public",
+            render_docx(item["title"], item["paragraphs"]),
+        )
 
     manifest = docs_dir / "manifest.yaml"
     contents = yaml.safe_dump(

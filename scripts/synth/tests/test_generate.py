@@ -23,7 +23,9 @@ def test_demo_corpus_and_revision_are_manifest_driven(tmp_path: Path) -> None:
     manifest = build_corpus(samples_dir, docs_dir, revision=1)
     contents = yaml.safe_load(manifest.read_bytes())
     documents = {entry["doc_id"]: entry for entry in contents["documents"]}
-    assert len(documents) == 7
+    assert len(documents) == 24
+    assert "license-return" in documents
+    assert "license-key-delivery" in documents
     assert {area["code"] for area in contents["areas"]} == {"ДИБ", "ДБРЦТ", "общий"}
     assert {entry["access"] for entry in documents.values()} == {"public", "closed_fin"}
     assert documents["deal-margin-control"]["access"] == "public"
