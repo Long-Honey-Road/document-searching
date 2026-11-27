@@ -93,13 +93,13 @@ def encode_record(record: RunHeader | CaseResult, secrets: set[str] | None = Non
         data["model"] = _redact(data["model"], values)
         data["stand"] = _redact(data["stand"], values)
     else:
-        for key in ("question", "reference_answer"):
+        for key in ("question", "reference_answer", "required_phrases", "forbidden_phrases"):
             data["question"][key] = _redact(data["question"][key], values)
         if answer := data["answer"]:
             answer["text"] = _redact(answer["text"], values)
             answer["meta"] = _redact(answer["meta"], values)
         if checks := data["checks"]:
-            for key in ("missing_clauses", "leaks", "unverifiable_sources"):
+            for key in ("missing_clauses", "leaks", "unverifiable_sources", "behavior_issues"):
                 checks[key] = _redact(checks[key], values)
         data["error"] = _redact(data["error"], values)
     return json.dumps(data, ensure_ascii=False) + "\n"
@@ -188,6 +188,15 @@ def _failure(case: CaseResult) -> str:
         failed = [label for key, label in _CHECKS.items() if not getattr(case.checks, key)]
         if failed:
             lines.extend([f"**Не прошли проверки** {', '.join(failed)}", ""])
+        if case.checks.behavior_issues:
+            lines.extend(
+                [
+                    "**Наблюдения по поведению**",
+                    "",
+                    *(f"- {issue}" for issue in case.checks.behavior_issues),
+                    "",
+                ]
+            )
     if case.review and case.review.note:
         lines.extend(["**Примечание разметки**", _block(case.review.note), ""])
     return "\n".join(lines)
@@ -199,6 +208,7 @@ _CHECKS = {
     "verified": "Признак verified",
     "area": "Область и память",
     "timings": "Оба времени измерены",
+    "behavior": "Поведение в диалоге",
 }
 
 

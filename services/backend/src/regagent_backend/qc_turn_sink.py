@@ -13,6 +13,7 @@ _OUTCOMES: dict[str, qc_analytics.Outcome] = {
     "empty_search": "empty_search",
     "unsupported": "insufficient_evidence",
     "ask_area": "clarification",
+    "ask_clarification": "clarification",
     "refused": "refusal",
     "search_unavailable": "search_unavailable",
     "model_timeout": "model_timeout",

@@ -29,7 +29,13 @@ from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
 from openai import OpenAIError
 from pydantic import SecretStr
-from regagent_common.contracts import AnswerMeta, AnswerSource, TurnOutcome, TurnReport
+from regagent_common.contracts import (
+    AnswerMeta,
+    AnswerOutcome,
+    AnswerSource,
+    TurnOutcome,
+    TurnReport,
+)
 from regagent_common.settings import CommonSettings
 
 from regagent_backend.agent import generate_answer, last_answer
@@ -39,6 +45,18 @@ from regagent_backend.citations import (
     public_text,
     verify_citations,
     verify_comparison,
+)
+from regagent_backend.dialogue import (
+    CLARIFY_PREFIX,
+    MAX_DETAIL_QUESTIONS,
+    NO_ANSWER,
+    NOT_FOUND,
+    QC_GUIDE,
+    Topic,
+    current_topic,
+    parse_clarification,
+    qc_draft,
+    stored_meta,
 )
 from regagent_backend.events import events, run_fields
 from regagent_backend.guard import PROMPTS, GuardResult, classify
@@ -53,14 +71,13 @@ from regagent_backend.usage import UsageCallback
 
 log = logging.getLogger(__name__)
 AreaSource = Literal["memory", "question", "asked", "none"]
-Outcome = Literal["answer", "refusal", "not_found", "ask_area", "fallback"]
 
 FALLBACK = "Не удалось надёжно ответить по регламентам. Попробуйте уточнить вопрос."
 REFUSAL = (
     "Я отвечаю по внутренним регламентам компании. "
     "Могу рассказать, какой порядок установлен регламентом."
 )
-NOT_FOUND = "В доступных материалах не нашёл сведений по этому вопросу."
+SEARCH_UNAVAILABLE = "Поиск по регламентам сейчас недоступен. Попробуйте задать вопрос позже."
 ASK_AREA = "Уточните, для какой области нужен порядок по регламенту."
 _SECOND_QUESTION = re.compile(
     r"(?<=[,;?])\s+(?:а|и)\s+(?=(?:кто|что|как|когда|где|куда|сколько|какой|какие)\b)",
@@ -97,10 +114,24 @@ class TurnSink(Protocol):
 TURN_REPORT_TIMEOUT_S = 2.0
 # Команды памяти и пустые запуски — не вопросы для аналитики ОКК
 _NOT_REPORTED = frozenset(
-    {"no_question", "memory_remember", "memory_forget", "memory_area_unclear", "memory_unavailable"}
+    {
+        "no_question",
+        "memory_remember",
+        "memory_forget",
+        "memory_area_unclear",
+        "memory_unavailable",
+        "qc_draft",
+        "qc_guide",
+    }
 )
 _UNSUPPORTED = frozenset(
-    {"citations_rejected", "comparison_rejected", "low_confidence", "practice_not_cited"}
+    {
+        "citations_rejected",
+        "comparison_rejected",
+        "low_confidence",
+        "practice_not_cited",
+        "no_regulation_support",
+    }
 )
 
 
@@ -146,7 +177,7 @@ def _runtime_deps() -> AgentDeps:
 
 def _reply(
     text: str,
-    outcome: Outcome,
+    outcome: AnswerOutcome,
     *,
     area: str | None = None,
     area_source: AreaSource = "none",
@@ -166,14 +197,11 @@ def _reply(
     return AIMessage(content=text, additional_kwargs={"answer_meta": meta.model_dump()})
 
 
-def _awaiting_area(messages: list[BaseMessage]) -> bool:
-    previous = next(
-        (message for message in reversed(messages) if isinstance(message, AIMessage)), None
-    )
-    if previous is None:
-        return False
-    answer_meta = previous.additional_kwargs.get("answer_meta")
-    return isinstance(answer_meta, dict) and answer_meta.get("outcome") == "ask_area"
+def _unanswered(run: SearchRun) -> AIMessage:
+    if run.unavailable and not run.fragments:
+        return _reply(SEARCH_UNAVAILABLE, "fallback", reason="search_unavailable")
+    reason = "no_regulation_support" if run.fragments else "empty_search"
+    return _reply(NOT_FOUND, "not_found", reason=reason)
 
 
 async def _memory_action(
@@ -226,7 +254,7 @@ async def _answer(
     deps: AgentDeps,
     identity: UserIdentity,
     questions: list[str],
-    awaiting_area: bool,
+    continuation: Topic | None,
     search_queries: list[str],
     memory_line: str,
     areas: tuple[str, ...],
@@ -255,14 +283,14 @@ async def _answer(
     # Предыдущие вопросы помогают разрешать короткие продолжения. Ответы и сырые результаты
     # прошлого запуска не передаются модели и не могут подтвердить ссылку.
     history: list[AnyMessage] = [HumanMessage(question) for question in questions]
-    initial_query = "\n".join(questions[-2:]) if awaiting_area else questions[-1]
+    initial_query = "\n".join(continuation.questions) if continuation else questions[-1]
     queries = list(
         dict.fromkeys(query.strip()[: settings.QUESTION_MAX_CHARS] for query in search_queries)
     )
     queries = [query for query in queries if query][:2]
-    if len(queries) < 2 and not awaiting_area:
+    if len(queries) < 2 and continuation is None:
         queries = [part.strip(" ,;") for part in _SECOND_QUESTION.split(initial_query, maxsplit=1)]
-    if len(queries) < 2 or settings.AGENT_MAX_SEARCHES == 1:
+    if continuation is not None or len(queries) < 2 or settings.AGENT_MAX_SEARCHES == 1:
         queries = [initial_query]
     calls = [
         ToolCall(name="search_docs", args={"query": query}, id=f"initial-search-{i}")
@@ -279,6 +307,8 @@ async def _answer(
     )
     if not areas and any(result.areas_diverge for _, result in run.searches):
         return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
+    if run.unavailable and not run.searches:
+        return _unanswered(run), run
     history.append(AIMessage(content="", tool_calls=calls))
     history.extend(
         ToolMessage(content=initial, tool_call_id=call["id"] or "")
@@ -300,8 +330,6 @@ async def _answer(
             log.warning("answer generation failed: %s", type(exc).__name__)
             if trace is not None:
                 trace.error_code = type(exc).__name__
-            if run.searches and all(not result.fragments for _, result in run.searches):
-                return _reply(NOT_FOUND, "not_found", reason="empty_search"), run
             reason = "generation_error"
             break
         answer = last_answer(history)
@@ -309,7 +337,19 @@ async def _answer(
         citations = verify_citations(text, set(run.fragments))
         if not areas and any(result.areas_diverge for _, result in run.searches):
             return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
-        supported = citations.ok
+        if text == NO_ANSWER:
+            return _unanswered(run), run
+        if clarification := parse_clarification(text):
+            if continuation and continuation.clarification_count >= MAX_DETAIL_QUESTIONS:
+                return _unanswered(run), run
+            return _reply(
+                clarification,
+                "ask_clarification",
+                area=areas[0] if len(areas) == 1 else None,
+                area_source=area_source,
+                reason="missing_detail",
+            ), run
+        supported = citations.ok and not text.startswith((CLARIFY_PREFIX, NO_ANSWER))
         reason = "citations_rejected"
         overridden = missing_overrides(text, run.fragments) if supported else []
         if overridden:
@@ -339,10 +379,7 @@ async def _answer(
             and run.searches
             and all(result.low_confidence or not result.fragments for _, result in run.searches)
         ):
-            empty = all(not result.fragments for _, result in run.searches)
-            return _reply(
-                NOT_FOUND, "not_found", reason="empty_search" if empty else "low_confidence"
-            ), run
+            return _unanswered(run), run
         if attempt == 0 and overridden:
             history.append(
                 HumanMessage(
@@ -359,7 +396,8 @@ async def _answer(
                     "Сверь каждое утверждение с процитированным пунктом и его областью. "
                     "Удали неподтверждённые и противоречащие друг другу утверждения. "
                     "Используй только ссылки из результатов этого запуска. "
-                    "Если данных недостаточно, сообщи об этом."
+                    "Если нужен один уточняющий ответ, используй формат УТОЧНЕНИЕ. "
+                    "Если ни один пункт не подтверждает ответ, верни НЕТ_ОТВЕТА."
                 )
             )
     return _reply(FALLBACK, "fallback", reason=reason), run
@@ -380,13 +418,25 @@ async def _turn(
     if not questions[-1] or len(questions[-1]) > limit:
         return _reply(f"Задайте вопрос длиной до {limit} символов.", "refusal", reason="too_long")
     questions = [question[-limit:] for question in questions[-6:]]
-    awaiting = _awaiting_area(messages)
+    previous = next(
+        (stored_meta(message) for message in reversed(messages) if isinstance(message, AIMessage)),
+        None,
+    )
+    awaiting_area = previous is not None and previous.outcome == "ask_area"
+    awaiting_detail = previous is not None and previous.outcome == "ask_clarification"
+    continuation = current_topic(messages, limit) if awaiting_area or awaiting_detail else None
     settings = deps.settings
     ids = run_fields(config)
     try:
         with events.timed("guard.classify", **ids):
             guard = await classify(
-                deps.guard_model, questions, settings.AREA_CODES, awaiting, settings.GUARD_MODE, ids
+                deps.guard_model,
+                questions,
+                settings.AREA_CODES,
+                awaiting_area,
+                settings.GUARD_MODE,
+                ids,
+                awaiting_detail=awaiting_detail,
             )
     except (OpenAIError, OutputParserException, ValueError) as exc:
         log.warning("guard failed: %s", type(exc).__name__)
@@ -404,19 +454,38 @@ async def _turn(
         )
         return _reply(REFUSAL, "refusal", reason=refusal)
 
+    if guard.qc_action == "guide":
+        return _reply(QC_GUIDE, "qc_help", reason="qc_guide")
+    if guard.qc_action == "draft":
+        draft = qc_draft(messages, limit)
+        return _reply(
+            draft or "Напишите отдельным сообщением вопрос, по которому нужен черновик в ОКК.",
+            "qc_help",
+            reason="qc_draft",
+        )
+
     allowed = set(settings.AREA_CODES)
     areas = tuple(dict.fromkeys(area for area in guard.explicit_areas if area in allowed))
-    source: AreaSource = ("asked" if awaiting else "question") if areas else "none"
+    source: AreaSource = ("asked" if awaiting_area else "question") if areas else "none"
     memory = memory_service(store, settings) if store is not None else None
     if guard.memory_action != "none":
         if memory is None:
             return _reply(FALLBACK, "fallback", reason="memory_unavailable")
         return await _memory_action(memory, identity, guard, areas, config)
 
+    if (
+        awaiting_detail
+        and not areas
+        and previous
+        and previous.area_used
+        and previous.area_used in allowed
+    ):
+        areas, source = (previous.area_used,), previous.area_source
+
     now = datetime.now(UTC)
     records = await memory.load(identity.sub) if memory is not None else []
     memory_line = memory.render_for_prompt(records, now) if memory is not None else ""
-    if not areas and not awaiting and memory is not None:
+    if not areas and not awaiting_area and memory is not None:
         recent = next((record for record in records if not memory.is_stale(record, now)), None)
         if recent is not None:
             areas, source = (recent.value,), "memory"
@@ -427,7 +496,15 @@ async def _turn(
             return _reply(ASK_AREA, "ask_area", reason="memory_stale")
 
     reply, run = await _answer(
-        deps, identity, questions, awaiting, guard.search_queries, memory_line, areas, source, ids
+        deps,
+        identity,
+        questions,
+        continuation,
+        guard.search_queries,
+        memory_line,
+        areas,
+        source,
+        ids,
     )
     meta = AnswerMeta.model_validate(reply.additional_kwargs["answer_meta"])
     if (
@@ -473,6 +550,8 @@ def report_outcome(
         return "refused"
     if outcome == "ask_area":
         return "ask_area"
+    if outcome == "ask_clarification":
+        return "ask_clarification"
     if reason in _UNSUPPORTED:
         return "unsupported"
     if outcome == "not_found":

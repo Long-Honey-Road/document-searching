@@ -41,6 +41,7 @@ class Model:
         self.responses: list[Any] = []
         self.requests: list[dict[str, Any]] = []
         self.fragments = [PUNKT]
+        self.search_status = 200
 
     async def request(self, request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -74,6 +75,7 @@ def guard(*areas: str, on_topic: bool = True) -> dict[str, str]:
                 "explicit_areas": list(areas),
                 "search_queries": [],
                 "memory_action": "none",
+                "qc_action": "none",
             }
         )
     }
@@ -107,6 +109,8 @@ async def stand_parts() -> AsyncIterator[tuple[Model, AgentDeps, list[dict[str, 
         params = json.loads(request.content)
         assert params["levels"] == ["public"]
         lookups.append(params)
+        if model.search_status != 200:
+            return httpx.Response(model.search_status)
         response = SearchResponse(
             fragments=model.fragments,
             areas_found=["ДИБ"] if params["areas"] else ["ДИБ", "ДБРЦТ"],
@@ -475,3 +479,97 @@ async def test_guard_retries_a_transient_connection_error() -> None:
         result = await classify(chat, ["Дирекция ИБ"], ["ДИБ"], True, "json_schema")
     assert attempts == 2
     assert result.explicit_areas == ["ДИБ"]
+
+
+async def test_clarifies_missing_detail_and_keeps_the_original_question(stand: Any) -> None:
+    model, graph, lookups = stand
+    model.responses = [
+        guard("ДИБ"),
+        {"content": "УТОЧНЕНИЕ: Вы спрашиваете о пресейле или об открытом проекте?"},
+    ]
+    first = await graph.ainvoke(
+        {"messages": [("human", "В ДИБ кто отвечает за передачу материалов?")]}, config=CONFIG
+    )
+    reply = first["messages"][-1]
+    assert meta(reply).outcome == "ask_clarification"
+    assert reply.text == "Вы спрашиваете о пресейле или об открытом проекте?"
+    assert meta(reply).sources == []
+
+    model.responses = [
+        guard(),
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    second = await graph.ainvoke(
+        {"messages": [*first["messages"], ("human", "Открытый проект.")]}, config=CONFIG
+    )
+    assert meta(second["messages"][-1]).outcome == "answer"
+    assert lookups[-1]["areas"] == ["ДИБ"]
+    assert "кто отвечает за передачу материалов" in lookups[-1]["query"]
+    assert "Открытый проект" in lookups[-1]["query"]
+
+
+async def test_missing_answer_offers_qc_and_drafts_only_on_request(stand: Any) -> None:
+    model, graph, lookups = stand
+    question = "В ДИБ есть компенсация парковки при удалённой работе?"
+    model.responses = [guard("ДИБ"), {"content": "НЕТ_ОТВЕТА"}]
+    first = await graph.ainvoke({"messages": [("human", question)]}, config=CONFIG)
+    reply = first["messages"][-1]
+    assert meta(reply).outcome == "not_found"
+    assert meta(reply).sources == []
+    assert "Передать в ОКК" in reply.text and "могу составить черновик" in reply.text
+    assert "Черновик заявки" not in reply.text
+
+    draft_guard = json.loads(guard()["content"])
+    draft_guard["qc_action"] = "draft"
+    model.responses = [{"content": json.dumps(draft_guard)}]
+    second = await graph.ainvoke(
+        {"messages": [*first["messages"], ("human", "Составь черновик заявки в ОКК.")]},
+        config=CONFIG,
+    )
+    draft = second["messages"][-1]
+    assert meta(draft).outcome == "qc_help"
+    assert question in draft.text and "Черновик заявки" in draft.text
+    assert len(lookups) == 1
+
+    guide_guard = {**draft_guard, "qc_action": "guide"}
+    model.responses = [{"content": json.dumps(guide_guard)}]
+    third = await graph.ainvoke(
+        {"messages": [*second["messages"], ("human", "Передай заявку сам.")]}, config=CONFIG
+    )
+    guidance = third["messages"][-1]
+    assert meta(guidance).outcome == "qc_help"
+    assert "подтвердите отправку" in guidance.text
+    assert "заявка отправлена" not in guidance.text.lower()
+    assert len(lookups) == 1
+
+
+async def test_reaching_clarification_limit_offers_qc(stand: Any) -> None:
+    model, graph, lookups = stand
+    turns: list[Any] = []
+    questions = ("В ДИБ кто проверяет расчёт?", "Расчёт по проекту.", "Не знаю.")
+    for index, question in enumerate(questions):
+        model.responses = [
+            guard("ДИБ") if index == 0 else guard(),
+            {"content": f"УТОЧНЕНИЕ: Какой тип расчёта вы имеете в виду ({index + 1})?"},
+        ]
+        state = await graph.ainvoke({"messages": [*turns, ("human", question)]}, config=CONFIG)
+        turns = state["messages"]
+
+    last = turns[-1]
+    assert meta(last).outcome == "not_found"
+    assert "Передать в ОКК" in last.text
+    assert "кто проверяет расчёт" in lookups[-1]["query"]
+    assert "Расчёт по проекту." in lookups[-1]["query"]
+
+
+async def test_unavailable_search_does_not_offer_qc_for_a_false_gap(stand: Any) -> None:
+    model, graph, _ = stand
+    model.search_status = 503
+    model.responses = [guard("ДИБ")]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Кто назначает руководителя проекта в ДИБ?")]}, config=CONFIG
+    )
+    last = state["messages"][-1]
+    assert meta(last).outcome == "fallback"
+    assert "сейчас недоступен" in last.text
+    assert "Передать в ОКК" not in last.text
