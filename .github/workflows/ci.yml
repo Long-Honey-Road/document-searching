@@ -27,6 +27,61 @@ jobs:
       - run: uv run --no-sync mypy packages services
       - run: uv run --no-sync pytest
 
+  # Изоляция уровней доступа на настоящем Postgres с pgvector и AGE (тот же образ, что на
+  # стенде) и потребитель очереди на RabbitMQ. Без этого тесты на утечки не запускаются нигде.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:management
+        env:
+          RABBITMQ_DEFAULT_USER: test
+          RABBITMQ_DEFAULT_PASS: test
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 30
+    env:
+      TEST_POSTGRES_HOST: 127.0.0.1
+      TEST_POSTGRES_PORT: "5432"
+      TEST_POSTGRES_USER: knowledge
+      TEST_POSTGRES_PASSWORD: knowledge-test
+      TEST_POSTGRES_DB: knowledge
+      TEST_RABBITMQ_URL: amqp://test:test@127.0.0.1:5672/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync --all-packages --frozen
+      - name: Postgres из deploy/postgres
+        run: |
+          docker build -t regagent-postgres deploy/postgres
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+            -e APP_DB=app -e APP_DB_USER=backend -e APP_DB_PASSWORD=backend-test \
+            -e KNOWLEDGE_DB=knowledge -e KNOWLEDGE_DB_USER=knowledge \
+            -e KNOWLEDGE_DB_PASSWORD=knowledge-test \
+            -e KEYCLOAK_DB=keycloak -e KEYCLOAK_DB_USER=keycloak \
+            -e KEYCLOAK_DB_PASSWORD=keycloak-test \
+            regagent-postgres
+          # По TCP сервер отвечает только после init-скриптов (временный сервер — на сокете)
+          for _ in $(seq 90); do
+            if docker exec pg pg_isready -h 127.0.0.1 -U postgres -d knowledge; then break; fi
+            sleep 2
+          done
+          docker exec pg psql -h 127.0.0.1 -U postgres -d knowledge -Atc \
+            "select extname || ' ' || extversion from pg_extension order by 1"
+      - run: uv run --no-sync pytest -m "(integration or leak) and not e2e" services packages -v
+      - if: failure()
+        run: docker logs pg | tail -100
+
   web:
     runs-on: ubuntu-latest
     defaults:
