@@ -1,8 +1,29 @@
 # Запуск: docker compose -f deploy/compose.yaml --env-file .env up -d
 # Профили: dev (Mailpit), local-embeddings (TEI), local-reranker (только реранкер).
-# Сервисы knowledge, backend и web
-# добавляются задачами плана (dev_docs/10-work-plan.md).
 name: regagent
+
+x-model-env: &model-env
+  ENV: ${ENV}
+  LOG_LEVEL: ${LOG_LEVEL}
+  LLM_BASE_URL: ${LLM_BASE_URL}
+  LLM_API_KEY: ${LLM_API_KEY}
+  LLM_MODEL: ${LLM_MODEL}
+  LLM_AGENT_MODEL: ${LLM_AGENT_MODEL}
+  LLM_GUARD_MODEL: ${LLM_GUARD_MODEL}
+  LLM_EXTRACT_MODEL: ${LLM_EXTRACT_MODEL}
+  LLM_KEYWORD_MODEL: ${LLM_KEYWORD_MODEL}
+  LLM_JUDGE_MODEL: ${LLM_JUDGE_MODEL}
+  LLM_TIMEOUT_S: ${LLM_TIMEOUT_S}
+  LLM_MAX_CONCURRENCY: ${LLM_MAX_CONCURRENCY}
+  LLM_EXTRA_BODY_JSON: ${LLM_EXTRA_BODY_JSON}
+  EMBEDDINGS_BASE_URL: ${EMBEDDINGS_BASE_URL}
+  EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL}
+  EMBEDDINGS_DIM: ${EMBEDDINGS_DIM}
+  RERANK_BASE_URL: ${RERANK_BASE_URL}
+  RERANK_MODEL: ${RERANK_MODEL}
+  RERANK_MIN_SCORE: ${RERANK_MIN_SCORE}
+  KNOWLEDGE_INTERNAL_TOKEN: ${KNOWLEDGE_INTERNAL_TOKEN}
+  ACCESS_LEVELS_FILE: /app/config/access_levels.yaml
 
 services:
   postgres:
@@ -59,6 +80,84 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  knowledge:
+    build:
+      context: ..
+      dockerfile: services/knowledge/Dockerfile
+    environment:
+      <<: *model-env
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      KNOWLEDGE_DB: ${KNOWLEDGE_DB}
+      KNOWLEDGE_DB_USER: ${KNOWLEDGE_DB_USER}
+      KNOWLEDGE_DB_PASSWORD: ${KNOWLEDGE_DB_PASSWORD}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      DOCS_DIR: ${DOCS_DIR}
+      OKF_DIR: ${OKF_DIR}
+      WATCH_DEBOUNCE_S: ${WATCH_DEBOUNCE_S}
+      INDEX_MAX_RETRIES: ${INDEX_MAX_RETRIES}
+      CHUNK_MAX_TOKENS: ${CHUNK_MAX_TOKENS}
+      SEARCH_TOP_K: ${SEARCH_TOP_K}
+      SEARCH_MODE: ${SEARCH_MODE}
+    volumes:
+      - type: bind
+        source: ../data/docs
+        target: ${DOCS_DIR}
+        read_only: true
+      - type: bind
+        source: ../data/okf
+        target: ${OKF_DIR}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8000/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    build:
+      context: ..
+      dockerfile: services/backend/Dockerfile
+    environment:
+      <<: *model-env
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${APP_DB}
+      POSTGRES_USER: ${APP_DB_USER}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD}
+      AEGRA_CONFIG: /app/services/backend/aegra.json
+      AUTH_TYPE: custom
+      SERVER_URL: ${PUBLIC_BASE_URL}/api
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE}
+      KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-http://keycloak:8080/auth/realms/regagent/protocol/openid-connect/certs}
+      KNOWLEDGE_URL: ${KNOWLEDGE_URL}
+      AGENT_ESCALATE_AFTER: ${AGENT_ESCALATE_AFTER}
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS}
+      MEMORY_AREA_TTL_DAYS: ${MEMORY_AREA_TTL_DAYS}
+      MEMORY_MAX_ACTIVE_AREAS: ${MEMORY_MAX_ACTIVE_AREAS}
+      QUESTION_MAX_CHARS: ${QUESTION_MAX_CHARS}
+      RATE_LIMIT_PER_USER_PER_MIN: ${RATE_LIMIT_PER_USER_PER_MIN}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+  web:
+    build:
+      context: ../web
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_OIDC_AUTHORITY: ${VITE_OIDC_AUTHORITY}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID}
+        VITE_ASSISTANT_ID: ${VITE_ASSISTANT_ID:-}
 
   proxy:
     image: caddy:latest

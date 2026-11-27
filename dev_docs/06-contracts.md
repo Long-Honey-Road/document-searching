@@ -106,6 +106,7 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `KEYCLOAK_DB`, `KEYCLOAK_DB_USER`, `KEYCLOAK_DB_PASSWORD` | БД Keycloak | |
 | `RABBITMQ_URL` | брокер | |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_AUDIENCE`, `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD` | OIDC и админ Keycloak | |
+| `KEYCLOAK_JWKS_URL` | Внутренний адрес публичных ключей Keycloak | `http://keycloak:8080/auth/realms/regagent/protocol/openid-connect/certs` |
 | `WEB_DEV_BASE_URL` | Дополнительный origin для Vite в realm | `http://localhost:5173` |
 | `KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD`, `KEYCLOAK_EMPLOYEE_FIN_PASSWORD`, `KEYCLOAK_QC_EXPERT_PASSWORD`, `KEYCLOAK_ADMIN_DEMO_PASSWORD` | Пароли именных учёток, импортируемые при создании demo realm | |
 | `ACCESS_LEVELS_FILE` | YAML уровней доступа | `config/access_levels.yaml` |
