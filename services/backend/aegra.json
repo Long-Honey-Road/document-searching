@@ -4,5 +4,9 @@
   },
   "auth": {
     "path": "regagent_backend.auth:auth"
+  },
+  "http": {
+    "app": "./src/regagent_backend/routes.py:app",
+    "enable_custom_route_auth": true
   }
 }

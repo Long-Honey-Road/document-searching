@@ -59,12 +59,12 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 ```json
 {"verified": true, "area_used": "ДИБ", "area_source": "memory|question|asked|none",
  "sources": [{"n": 1, "fragment_id": "...", "title": "...", "clause": "2.7", "version": 3, "kind": "regulation"}],
- "outcome": "answer|refusal|not_found|fallback"}
+ "outcome": "answer|refusal|not_found|ask_area|fallback"}
 ```
 
 web заменяет `[f:...]` на номера `[1]` по `sources`.
 
-Где лежит (D-19): итоговое сообщение — AIMessage из узла `finalize`, `AnswerMeta` — в `additional_kwargs.answer_meta`. `assistant_id` — `regagent`. Черновик стримится событиями `messages` с `metadata.langgraph_node = "agent"`; web показывает сообщения пользователя и AI-сообщения с `answer_meta`, остальные (вызовы инструментов) скрывает.
+Где лежит (D-19): итоговое сообщение — AIMessage из узла `finalize`, `AnswerMeta` — в `additional_kwargs.answer_meta`. `assistant_id` — `regagent`. Публичный стрим доставляет проверенный итог. Вызовы инструментов, результаты поиска и черновик модели остаются во внутреннем запуске (D-35).
 
 ## Память
 
@@ -74,8 +74,8 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 
 | Метод | Путь | Роль | Что делает |
 | --- | --- | --- | --- |
-| GET | `/me/memory` | любой | своя память |
-| DELETE | `/me/memory/{key}` | любой | удалить запись |
+| GET | `/me/memory` | любой | `{"records": [...]}`: свои записи с полем `key` |
+| DELETE | `/me/memory/{key}` | любой | удалить свою запись, `204` также при её отсутствии |
 | GET | `/me/notifications` | любой | уведомления |
 | POST | `/feedback` | любой | `{thread_id, message_id, kind: "contradiction"|"missing", comment}` → элемент ОКК |
 | GET | `/qc/clusters` | qc | очередь |
@@ -97,11 +97,14 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `LLM_BASE_URL`, `LLM_API_KEY` | внешний OpenAI-совместимый сервер | |
 | `LLM_MODEL` | модель по умолчанию | |
 | `LLM_AGENT_MODEL`, `LLM_GUARD_MODEL`, `LLM_EXTRACT_MODEL`, `LLM_KEYWORD_MODEL`, `LLM_JUDGE_MODEL` | переопределения по ролям (пусто = `LLM_MODEL`) | |
+| `GUARD_MODE` | формат структурированного ответа guard, `json_schema` или `tool` | `json_schema` |
 | `LLM_TIMEOUT_S`, `LLM_MAX_CONCURRENCY` | таймаут и параллелизм | `120`, `8` |
 | `LLM_EXTRA_BODY_JSON` | доп. параметры запроса, зависящие от сервера (например отключение рассуждений) | `{"chat_template_kwargs":{"enable_thinking":false}}` |
 | `EMBEDDINGS_BASE_URL`, `EMBEDDINGS_MODEL`, `EMBEDDINGS_DIM` | эмбеддинги | `http://embeddings:80`, `BAAI/bge-m3`, `1024` |
 | `TEI_IMAGE` | Образ TEI для архитектуры хоста (`cpu-arm64-1.10` на Apple Silicon) | `ghcr.io/huggingface/text-embeddings-inference:cpu-1.10` |
+| `RERANK_MODE` | `embeddings` переиспользует модель эмбеддингов для демо, `tei` включает отдельный реранкер | `embeddings` |
 | `RERANK_BASE_URL`, `RERANK_MODEL`, `RERANK_MIN_SCORE` | реранкер и порог | |
+| `RERANK_CANDIDATE_LIMIT`, `RERANK_TEXT_MAX_CHARS` | предел числа кандидатов и длины релевантного отрывка для одного кандидата в реранке | `24`, `384` |
 | `POSTGRES_HOST`, `POSTGRES_PORT` | Postgres | |
 | `APP_DB`, `APP_DB_USER`, `APP_DB_PASSWORD` | БД backend | |
 | `KNOWLEDGE_DB`, `KNOWLEDGE_DB_USER`, `KNOWLEDGE_DB_PASSWORD` | БД knowledge | |

@@ -6,10 +6,13 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from regagent_common.settings import CommonSettings
 
 SearchMode = Literal["naive", "local", "global", "hybrid", "mix"]
+DEFAULT_SEARCH_TOP_K = 8
+DEFAULT_RERANK_CANDIDATE_LIMIT = 24
+DEFAULT_RERANK_TEXT_MAX_CHARS = 384
 
 
 class KnowledgeSettings(CommonSettings):
@@ -20,11 +23,25 @@ class KnowledgeSettings(CommonSettings):
     knowledge_db_password: SecretStr
 
     chunk_max_tokens: int = 1200
-    search_top_k: int = 8
+    search_top_k: int = Field(default=DEFAULT_SEARCH_TOP_K, ge=1)
+    rerank_mode: Literal["embeddings", "tei"] = "embeddings"
+    rerank_candidate_limit: int = Field(default=DEFAULT_RERANK_CANDIDATE_LIMIT, ge=1)
+    rerank_text_max_chars: int = Field(default=DEFAULT_RERANK_TEXT_MAX_CHARS, ge=128)
     search_mode: SearchMode = "mix"
 
     lightrag_working_dir: Path = Path("/data/lightrag")
     lightrag_extract_gleaning: int = 1
+
+    docs_dir: Path = Path("/data/docs")
+    okf_dir: Path = Path("/data/okf")
+    access_levels_file: Path = Path("config/access_levels.yaml")
+    watch_debounce_s: float = Field(default=3, ge=0)
+    index_max_retries: int = Field(default=3, ge=0)
+
+
+class RuntimeSettings(KnowledgeSettings):
+    rabbitmq_url: SecretStr
+    knowledge_internal_token: SecretStr
 
 
 def configure_postgres_env(settings: KnowledgeSettings) -> None:

@@ -36,3 +36,14 @@ test('replaces the draft and only links verified citations', () => {
   expect(screen.queryByText(/Черновик/)).not.toBeInTheDocument()
   expect(screen.getByRole('link', { name: '1' })).toBeInTheDocument()
 })
+
+test('omits edition for a practice source without a version', () => {
+  const practice = {
+    ...meta,
+    sources: [{ ...meta.sources[0], fragment_id: 'practice:14', kind: 'practice', version: null }],
+  } as const
+  render(<Answer text="Итог [f:practice:14]." meta={practice} />)
+  const target = screen.getByRole('link', { name: '1' }).getAttribute('href')?.slice(1)
+  expect(document.getElementById(target ?? '')).toHaveTextContent('п. 2.7')
+  expect(document.getElementById(target ?? '')).not.toHaveTextContent('ред.')
+})

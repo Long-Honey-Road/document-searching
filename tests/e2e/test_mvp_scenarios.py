@@ -155,7 +155,7 @@ def test_loopback_alias_redirects_before_oidc(
     assert response.headers["location"] == base + "/?regagent=1"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def employees(stand_config: tuple[dict[str, str | None], str]) -> dict[str, Employee]:
     config, base = stand_config
     issuer = config.get("KEYCLOAK_ISSUER") or base + "/auth/realms/regagent"

@@ -1,7 +1,8 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+from lightrag.base import DeletionResult
 from regagent_knowledge.rag import (
     FRAGMENT_SEPARATOR,
     SENTINEL_WORKSPACE,
@@ -29,6 +30,7 @@ class FakeRag:
         self.log = log
         self.doc_status = FakeDocStatus()
         self.insert_status = "processed"
+        self.delete_status: Literal["success", "not_found", "not_allowed", "fail"] = "success"
         self.query_result: dict[str, Any] = {
             "status": "success",
             "data": {
@@ -49,9 +51,11 @@ class FakeRag:
         self.doc_status.status[kwargs["ids"]] = self.insert_status
         return "track"
 
-    async def adelete_by_doc_id(self, doc_id: str) -> Any:
+    async def adelete_by_doc_id(self, doc_id: str) -> DeletionResult:
         self.log.append(("delete", self.workspace, doc_id))
-        self.doc_status.status.pop(doc_id, None)
+        if self.delete_status == "success":
+            self.doc_status.status.pop(doc_id, None)
+        return DeletionResult(self.delete_status, doc_id, "удаление")
 
     async def aquery_data(self, query: str, param: Any) -> dict[str, Any]:
         self.log.append(("query", self.workspace, query, param))
@@ -95,6 +99,17 @@ async def test_unknown_level_raises(setup: Any) -> None:
 def test_workspace_naming(setup: Any) -> None:
     reg, _, _ = setup
     assert reg.workspace("closed_fin") == "lvl_closed_fin"
+
+
+async def test_delete_failure_prevents_replacement(setup: Any) -> None:
+    reg, log, made = setup
+    await reg.start()
+    made["lvl_public"].delete_status = "fail"
+
+    with pytest.raises(RagError, match="удаление"):
+        await reg.insert("public", "x@v4", ["текст"])
+
+    assert not any(call[0] == "insert" for call in log)
 
 
 async def test_insert_replaces_and_splits_by_our_separator(setup: Any) -> None:

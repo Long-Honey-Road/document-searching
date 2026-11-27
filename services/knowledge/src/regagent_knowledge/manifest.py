@@ -114,7 +114,7 @@ def load_manifest(path: Path, levels: AccessLevels) -> ManifestLoadResult:
 
     result.areas = _load_areas(data.get("areas"), result.errors)
     codes = result.area_codes
-    raw_docs = data.get("documents") or []
+    raw_docs = data.get("documents", [])
     if not isinstance(raw_docs, list):
         result.errors.append(ManifestError(None, None, "секция documents должна быть списком"))
         return result

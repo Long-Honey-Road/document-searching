@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from lightrag import QueryParam
+from lightrag.base import DeletionResult
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class LightRAGLike(Protocol):
 
     async def ainsert(self, input: str, **kwargs: Any) -> str: ...
 
-    async def adelete_by_doc_id(self, doc_id: str) -> Any: ...
+    async def adelete_by_doc_id(self, doc_id: str) -> DeletionResult: ...
 
     async def aquery_data(self, query: str, param: QueryParam) -> dict[str, Any]: ...
 
@@ -134,7 +135,7 @@ class RagRegistry:
             if FRAGMENT_SEPARATOR in chunk:
                 raise ValueError("фрагмент содержит служебный разделитель")
         rag = self._rag(level)
-        await rag.adelete_by_doc_id(doc_key)
+        await self.delete(level, doc_key)
         await rag.ainsert(
             FRAGMENT_SEPARATOR.join(chunks),
             split_by_character=FRAGMENT_SEPARATOR,
@@ -151,7 +152,11 @@ class RagRegistry:
             )
 
     async def delete(self, level: str, doc_key: str) -> None:
-        await self._rag(level).adelete_by_doc_id(doc_key)
+        result = await self._rag(level).adelete_by_doc_id(doc_key)
+        if result.status not in {"success", "not_found"}:
+            raise RagError(
+                f"удаление {doc_key} из {self.workspace(level)}: {result.status} {result.message}"
+            )
 
     async def query(
         self,

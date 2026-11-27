@@ -131,3 +131,10 @@ def test_answer_meta_rejects_unknown_outcome() -> None:
 
 def test_area_defaults() -> None:
     assert Area(code="общий", title="Общий").synonyms == []
+
+
+def test_answer_meta_accepts_area_clarification() -> None:
+    meta = AnswerMeta(
+        verified=True, area_used=None, area_source="none", sources=[], outcome="ask_area"
+    )
+    assert meta.outcome == "ask_area"

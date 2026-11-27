@@ -6,14 +6,12 @@ Knowledge и Backend работают во внутренней сети Compose
 указывает на Caddy, а Backend получает ключи напрямую от Keycloak внутри сети.
 
 Скопируйте `.env.example` в `.env`, задайте пароли и конфигурацию LLM.
-На Apple Silicon установите `TEI_IMAGE` с тегом `cpu-arm64-1.10`.
-Профиль `local-reranker` запускает только TEI-реранкер, а эмбеддинги идут в запущенную
-на хосте Ollama через `host.docker.internal:11434`.
+Для демо запустите Ollama на Mac с загруженной моделью эмбеддингов. Knowledge использует её и для поиска, и для реранка через `host.docker.internal:11434`.
 
 ```bash
 uv sync --all-packages --frozen
 uv run python scripts/synth/generate.py
-docker compose --env-file .env -f deploy/compose.yaml --profile local-reranker up -d --build
+docker compose --env-file .env -f deploy/compose.yaml up -d --build
 ```
 
 Если используете TEI и для эмбеддингов, выберите профиль `local-embeddings`,

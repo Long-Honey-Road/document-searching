@@ -1,0 +1,374 @@
+import json
+from collections.abc import AsyncIterator
+from typing import Any
+
+import httpx
+import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_openai import ChatOpenAI
+from langgraph.store.memory import InMemoryStore
+from pydantic import SecretStr
+from regagent_backend.graph import AgentDeps, build_graph
+from regagent_backend.knowledge_client import KnowledgeClient
+from regagent_backend.settings import BackendSettings
+from regagent_common.contracts import AnswerMeta, Fragment, SearchResponse
+
+CONFIG: RunnableConfig = {
+    "configurable": {
+        "langgraph_auth_user": {"identity": "reader", "levels": ["public"]},
+        "user_id": "finance",
+        "levels": ["closed_fin"],
+    }
+}
+PUNKT = Fragment(
+    fragment_id="dib-project-activity@1#2.7",
+    doc_id="dib-project-activity",
+    version=1,
+    title="Проектная деятельность ДИБ",
+    clause="2.7",
+    area="ДИБ",
+    kind="regulation",
+    text="Координатор назначает РП в течение одного рабочего дня.",
+    score=0.9,
+)
+
+
+class Model:
+    def __init__(self) -> None:
+        self.responses: list[Any] = []
+        self.requests: list[dict[str, Any]] = []
+
+    async def request(self, request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        self.requests.append(payload)
+        message = {"role": "assistant", **self.responses.pop(0)}
+        return httpx.Response(
+            200,
+            json={
+                "id": "completion",
+                "created": 1,
+                "object": "chat.completion",
+                "model": payload["model"],
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": message,
+                        "finish_reason": "tool_calls" if "tool_calls" in message else "stop",
+                    }
+                ],
+            },
+        )
+
+
+def guard(*areas: str, on_topic: bool = True) -> dict[str, str]:
+    return {
+        "content": json.dumps(
+            {
+                "on_topic": on_topic,
+                "injection": False,
+                "partial_topic": None,
+                "explicit_areas": list(areas),
+                "search_queries": [],
+                "memory_action": "none",
+            }
+        )
+    }
+
+
+def search(number: int = 1) -> dict[str, Any]:
+    return {
+        "content": None,
+        "tool_calls": [
+            {
+                "id": f"search-{number}",
+                "type": "function",
+                "function": {
+                    "name": "search_docs",
+                    "arguments": json.dumps(
+                        {"query": "Назначение руководителя проекта", "areas": []}
+                    ),
+                },
+            }
+        ],
+    }
+
+
+@pytest.fixture
+async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
+    model = Model()
+    lookups: list[dict[str, Any]] = []
+
+    async def knowledge(request: httpx.Request) -> httpx.Response:
+        params = json.loads(request.content)
+        assert params["levels"] == ["public"]
+        lookups.append(params)
+        response = SearchResponse(
+            fragments=[PUNKT],
+            areas_found=["ДИБ"] if params["areas"] else ["ДИБ", "ДБРЦТ"],
+            areas_diverge=not params["areas"],
+            low_confidence=False,
+        )
+        return httpx.Response(200, json=response.model_dump())
+
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(model.request)) as transport,
+        httpx.AsyncClient(transport=httpx.MockTransport(knowledge)) as knowledge_http,
+    ):
+        settings = BackendSettings(
+            _env_file=None,
+            AREA_CODES=["ДИБ", "ДБРЦТ", "общий"],
+            GUARD_MODE="json_schema",
+            RATE_LIMIT_PER_USER_PER_MIN=20,
+            KEYCLOAK_ISSUER="issuer",
+            KEYCLOAK_AUDIENCE="aud",
+            KEYCLOAK_JWKS_URL="https://keys",
+            KNOWLEDGE_URL="http://knowledge",
+            KNOWLEDGE_INTERNAL_TOKEN=SecretStr("internal"),
+        )
+        chat = ChatOpenAI(
+            model="fake",
+            base_url="http://llm/v1",
+            api_key=SecretStr("fake"),
+            http_async_client=transport,
+            disable_streaming=True,
+        )
+        deps = AgentDeps(
+            settings,
+            chat,
+            chat,
+            KnowledgeClient("http://knowledge", "internal", knowledge_http),
+        )
+        yield model, build_graph(deps, store=InMemoryStore()), lookups
+
+
+def meta(message: AIMessage) -> AnswerMeta:
+    return AnswerMeta.model_validate(message.additional_kwargs["answer_meta"])
+
+
+@pytest.mark.leak
+async def test_clarification_semantic_area_memory_and_tool_allowlist(stand: Any) -> None:
+    model, graph, lookups = stand
+    model.responses = [
+        guard(),
+        search(),
+        {"content": "Координатор департамента [f:dib-project-activity@1#2.7]."},
+    ]
+    first = await graph.ainvoke(
+        {"messages": [("human", "Кто назначает РП на проект?")]}, config=CONFIG
+    )
+    assert meta(first["messages"][-1]).outcome == "ask_area"
+    assert lookups[-1]["areas"] == []
+
+    answer = {
+        "content": "<think>внутренний текст</think>Координатор [f:dib-project-activity@1#2.7]."
+    }
+    model.responses = [guard("ДИБ"), search(), answer]
+    states = [
+        event
+        async for event in graph.astream(
+            {"messages": [*first["messages"], ("human", "В дирекции ИБ. И какой срок?")]},
+            config=CONFIG,
+            stream_mode=["values", "messages"],
+            subgraphs=True,
+        )
+    ]
+    values = [payload for ns, mode, payload in states if not ns and mode == "values"]
+    second = values[-1]["messages"][-1]
+    assert meta(second).area_source == "asked"
+    assert meta(second).area_used == "ДИБ"
+    assert meta(second).sources[0].fragment_id == PUNKT.fragment_id
+    assert "внутренний текст" not in repr(states)
+    assert PUNKT.text not in repr(states)
+    assert lookups[-1]["areas"] == ["ДИБ"]
+    assert all(
+        {tool["function"]["name"] for tool in request.get("tools", [])}
+        <= {"search_docs", "read_clause"}
+        for request in model.requests
+    )
+    prompt = model.requests[-1]["messages"][0]["content"]
+    assert "каждое утверждение" in prompt.lower()
+    assert "closed_fin" not in prompt
+
+    model.responses = [guard(), search(), answer]
+    remembered = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
+    assert meta(remembered["messages"][-1]).area_source == "memory"
+    assert lookups[-1]["areas"] == ["ДИБ"]
+    assert "недавние области:" in model.requests[-1]["messages"][0]["content"].lower()
+
+
+async def test_bad_citation_retries_once_then_fallback(stand: Any) -> None:
+    model, graph, _ = stand
+    wrong = {"content": "Срок два дня [f:x@1#1]."}
+    model.responses = [guard("ДИБ"), search(), wrong, wrong]
+    state = await graph.ainvoke({"messages": [("human", "Кто назначает РП в ДИБ?")]}, config=CONFIG)
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "fallback"
+    assert len(model.requests) == 4
+    assert len(state["messages"]) == 2
+    assert "два дня" not in reply.content
+
+
+async def test_off_topic_refusal_does_not_search(stand: Any) -> None:
+    model, graph, lookups = stand
+    model.responses = [guard(on_topic=False)]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Посчитай маржу моей сделки.")]}, config=CONFIG
+    )
+    assert meta(state["messages"][-1]).outcome == "refusal"
+    assert not lookups
+    assert len(model.requests) == 1
+
+
+async def test_account_limit_applies_before_provider_calls(stand: Any) -> None:
+    model, graph, lookups = stand
+    model.responses = [guard(on_topic=False)] * 20
+    for _ in model.responses.copy():
+        state = await graph.ainvoke(
+            {"messages": [("human", "Посчитай маржу сделки.")]}, config=CONFIG
+        )
+        assert meta(state["messages"][-1]).outcome == "refusal"
+    limited = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
+    assert "лимит" in limited["messages"][-1].text.lower()
+    assert len(model.requests) == 20
+    assert not lookups
+
+
+async def test_tool_mode_parses_guard_result() -> None:
+    from regagent_backend.guard import classify
+
+    model = Model()
+    model.responses = [
+        {
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "guard-1",
+                    "type": "function",
+                    "function": {"name": "GuardResult", "arguments": guard("ДИБ")["content"]},
+                }
+            ],
+        }
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(model.request)) as transport:
+        chat = ChatOpenAI(
+            model="fake",
+            base_url="http://llm/v1",
+            api_key=SecretStr("fake"),
+            http_async_client=transport,
+        )
+        result = await classify(chat, ["Дирекция ИБ"], ["ДИБ"], True, "tool")
+    assert result.on_topic and result.explicit_areas == ["ДИБ"]
+    assert model.requests[0]["tool_choice"]["function"]["name"] == "GuardResult"
+
+
+@pytest.mark.leak
+async def test_raw_event_stream_hides_guard_model_and_search_events(stand: Any) -> None:
+    model, graph, _ = stand
+    model.responses = [
+        guard("ДИБ"),
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    events = [
+        event
+        async for event in graph.astream_events(
+            {"messages": [("human", "Кто назначает РП в ДИБ?")]},
+            config=CONFIG,
+            version="v2",
+        )
+    ]
+    assert events
+    assert all(not event["event"].startswith(("on_chat_model", "on_tool")) for event in events)
+    assert "explicit_areas" not in repr(events)
+    assert PUNKT.text not in repr(events)
+
+
+async def test_expired_area_is_confirmed_before_an_unscoped_search(stand: Any) -> None:
+    model, graph, lookups = stand
+    await graph.store.aput(
+        ("users", "reader", "memory"),
+        "area:ДИБ",
+        {
+            "kind": "area",
+            "value": "ДИБ",
+            "source": "stated",
+            "confirmed_at": "2000-01-01T00:00:00Z",
+            "times_confirmed": 1,
+        },
+    )
+    model.responses = [guard()]
+    answer = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
+    assert meta(answer["messages"][-1]).outcome == "ask_area"
+    assert not lookups
+
+
+async def test_initial_search_grounds_answer_without_a_model_tool_call(stand: Any) -> None:
+    model, graph, lookups = stand
+    model.responses = [
+        guard("ДИБ"),
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    result = await graph.ainvoke(
+        {"messages": [("human", "Кто назначает РП в ДИБ?")]}, config=CONFIG
+    )
+    assert meta(result["messages"][-1]).outcome == "answer"
+    assert [lookup["areas"] for lookup in lookups] == [["ДИБ"]]
+
+
+async def test_guard_splits_multiple_questions_before_answering(stand: Any) -> None:
+    model, graph, lookups = stand
+    first = "Кто запрашивает спецификацию на ПО?"
+    second = "Кто назначает РП после уведомления из CRM?"
+    classification = json.loads(guard("ДИБ")["content"])
+    classification["search_queries"] = [first, second]
+    model.responses = [
+        {"content": json.dumps(classification)},
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    result = await graph.ainvoke({"messages": [("human", first + " А " + second)]}, config=CONFIG)
+    assert meta(result["messages"][-1]).outcome == "answer"
+    assert {lookup["query"] for lookup in lookups} == {first, second}
+    assert all(lookup["areas"] == ["ДИБ"] for lookup in lookups)
+
+
+async def test_explicit_second_question_is_searched_even_when_guard_does_not_split(
+    stand: Any,
+) -> None:
+    model, graph, lookups = stand
+    model.responses = [
+        guard("ДИБ"),
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    question = "Кто запрашивает спецификацию на ПО, а кто назначает РП после уведомления из CRM?"
+    await graph.ainvoke({"messages": [("human", question)]}, config=CONFIG)
+    assert {lookup["query"] for lookup in lookups} == {
+        "Кто запрашивает спецификацию на ПО",
+        "кто назначает РП после уведомления из CRM?",
+    }
+
+
+async def test_guard_retries_a_transient_connection_error() -> None:
+    from regagent_backend.guard import classify
+
+    model = Model()
+    model.responses = [guard("ДИБ")]
+    attempts = 0
+
+    async def request(req: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("transient")
+        return await model.request(req)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(request)) as transport:
+        chat = ChatOpenAI(
+            model="fake",
+            base_url="http://llm/v1",
+            api_key=SecretStr("fake"),
+            http_async_client=transport,
+            max_retries=0,
+        )
+        result = await classify(chat, ["Дирекция ИБ"], ["ДИБ"], True, "json_schema")
+    assert attempts == 2
+    assert result.explicit_areas == ["ДИБ"]

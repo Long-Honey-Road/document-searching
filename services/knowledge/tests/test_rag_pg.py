@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from regagent_knowledge.canary import check_isolation
 from regagent_knowledge.lightrag_factory import build_lightrag
 from regagent_knowledge.rag import RagError, RagRegistry
 from regagent_knowledge.settings import KnowledgeSettings
@@ -122,3 +123,9 @@ async def test_too_long_fragment_fails_instead_of_being_cut(registry: RagRegistr
     huge = _chunk("big", "1", pub, "слово " * 400)  # > 2 * CHUNK_MAX_TOKENS символов
     with pytest.raises(RagError):
         await registry.insert(pub, "big@v1", [huge])
+
+
+@pytest.mark.leak
+async def test_no_canary_leaks_between_levels(registry: RagRegistry) -> None:
+    public, closed = registry.levels
+    await check_isolation(registry, [public, closed], [closed])

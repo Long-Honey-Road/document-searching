@@ -1,14 +1,15 @@
 """Реестр документов в БД ``knowledge`` и планирование задач индексации.
 
 Реестр — источник истины для проверки прав в поиске: ``level_of(doc_id)`` (слой 4 из
-dev_docs/07-security.md). У удалённого и невалидного документа уровня нет — его фрагменты
-в выдачу не попадают.
+dev_docs/07-security.md). Поиску доступен только подтверждённый индексированный документ.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from importlib import resources
 from typing import Any, Literal, get_args
 
@@ -19,8 +20,6 @@ from .manifest import ManifestEntry
 
 DocStatus = Literal["queued", "indexing", "indexed", "failed", "invalid_manifest", "deleted"]
 STATUSES: frozenset[str] = frozenset(get_args(DocStatus))
-# Статусы, при которых в индексе нет фрагментов документа: уровень не отдаётся.
-_NO_CONTENT: frozenset[str] = frozenset({"deleted", "invalid_manifest"})
 
 
 @dataclass(frozen=True)
@@ -33,6 +32,13 @@ class DocumentRecord:
     title: str | None
     status: DocStatus
     error: str | None
+    updated_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class JobState:
+    status: str
+    attempts: int
 
 
 def plan_jobs(
@@ -59,7 +65,7 @@ def plan_jobs(
         rec = by_id.get(e.doc_id)
         unchanged = (
             rec is not None
-            and rec.status not in _NO_CONTENT
+            and rec.status in {"indexed", "failed"}
             and rec.version == e.version
             and rec.sha256 == sha
             and rec.level == e.access
@@ -71,7 +77,7 @@ def plan_jobs(
                 IndexJob(op="upsert", doc_id=e.doc_id, version=e.version, path=e.file, sha256=sha)
             )
     for rec in by_id.values():
-        if rec.doc_id in seen or rec.status in _NO_CONTENT or rec.version is None:
+        if rec.doc_id in seen or rec.status == "deleted" or rec.version is None:
             continue
         jobs.append(IndexJob(op="delete", doc_id=rec.doc_id, version=rec.version))
     return jobs
@@ -87,6 +93,7 @@ def _record(row: Mapping[str, Any]) -> DocumentRecord:
         title=row["title"],
         status=row["status"],
         error=row["error"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -154,7 +161,67 @@ class Registry:
         row = await self._pool.fetchrow(
             "SELECT level, status FROM documents WHERE doc_id = $1", doc_id
         )
-        if row is None or row["status"] in _NO_CONTENT:
+        if row is None or row["status"] != "indexed":
             return None
         level: str | None = row["level"]
         return level
+
+    async def transition_status(
+        self, record: DocumentRecord, status: DocStatus, error: str | None = None
+    ) -> bool:
+        """Меняет статус только у той записи, которую прочитал вызывающий код."""
+        result: str = await self._pool.execute(
+            """
+            UPDATE documents SET status = $8, error = $9, updated_at = now()
+            WHERE doc_id = $1 AND version IS NOT DISTINCT FROM $2
+              AND sha256 IS NOT DISTINCT FROM $3 AND level IS NOT DISTINCT FROM $4
+              AND areas = $5 AND title IS NOT DISTINCT FROM $6 AND status = $7
+            """,
+            record.doc_id,
+            record.version,
+            record.sha256,
+            record.level,
+            record.areas,
+            record.title,
+            record.status,
+            status,
+            error,
+        )
+        return result == "UPDATE 1"
+
+    async def job_state(self, job_id: str) -> JobState | None:
+        row = await self._pool.fetchrow(
+            "SELECT status, attempts FROM jobs WHERE job_id = $1", job_id
+        )
+        return JobState(row["status"], row["attempts"]) if row else None
+
+    async def save_job(
+        self,
+        job: IndexJob,
+        status: str,
+        attempts: int,
+        *,
+        error: str | None = None,
+        steps: Mapping[str, float] | None = None,
+    ) -> None:
+        await self._pool.execute(
+            """
+            INSERT INTO jobs (job_id, op, doc_id, version, sha256, path, status, attempts,
+                              error, steps, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (job_id) DO UPDATE SET
+                status = EXCLUDED.status, attempts = EXCLUDED.attempts, error = EXCLUDED.error,
+                steps = EXCLUDED.steps, updated_at = now()
+            """,
+            job.job_id,
+            job.op,
+            job.doc_id,
+            job.version,
+            job.sha256,
+            job.path,
+            status,
+            attempts,
+            error,
+            json.dumps(steps or {}),
+            job.created_at,
+        )

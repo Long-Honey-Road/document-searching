@@ -69,6 +69,18 @@ async def test_deleted_document_has_no_level(registry: Registry) -> None:
     assert await registry.level_of("a") is None
 
 
+async def test_stale_document_status_update_preserves_new_acl(registry: Registry) -> None:
+    await registry.set_status("a", 1, "s1", "public", "indexing")
+    snapshot = await registry.get("a")
+    assert snapshot is not None
+    assert await registry.level_of("a") is None
+
+    await registry.set_status("a", 2, "s2", "closed_fin", "indexed")
+
+    assert not await registry.transition_status(snapshot, "indexed")
+    assert await registry.level_of("a") == "closed_fin"
+
+
 async def test_unknown_status_rejected(registry: Registry) -> None:
     with pytest.raises(ValueError):
         await registry.set_status("a", 1, "s1", "public", "done")

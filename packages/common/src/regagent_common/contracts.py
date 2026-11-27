@@ -112,4 +112,4 @@ class AnswerMeta(_Model):
     area_used: str | None
     area_source: Literal["memory", "question", "asked", "none"]
     sources: list[AnswerSource]
-    outcome: Literal["answer", "refusal", "not_found", "fallback"]
+    outcome: Literal["answer", "refusal", "not_found", "ask_area", "fallback"]
