@@ -70,13 +70,17 @@ GitHub Actions проверяет Python, тесты на утечки (Postgres
 | `employee_fin` | `KEYCLOAK_EMPLOYEE_FIN_PASSWORD` | страница приложения | + закрытый финансовый уровень (группа `/levels/closed_fin`) |
 | `qc_expert` | `KEYCLOAK_QC_EXPERT_PASSWORD` | страница приложения | роль `qc` |
 | `admin` | `KEYCLOAK_ADMIN_DEMO_PASSWORD` | страница приложения | роль `admin` приложения |
-| значение `KEYCLOAK_ADMIN` (обычно `admin`) | `KEYCLOAK_ADMIN_PASSWORD` | админка Keycloak `/auth/admin/` | администратор Keycloak (realm `master`) |
+| значение `KEYCLOAK_ADMIN` (обычно `admin`) | `KEYCLOAK_ADMIN_PASSWORD` | только `kcadm.sh` в контейнере `keycloak` | администратор Keycloak (realm `master`) |
 
 **Логин `admin` есть в двух местах с разными паролями.** На странице приложения нужен
-`KEYCLOAK_ADMIN_DEMO_PASSWORD`, в админке Keycloak — `KEYCLOAK_ADMIN_PASSWORD`.
+`KEYCLOAK_ADMIN_DEMO_PASSWORD`, для `kcadm.sh` (realm `master`) — `KEYCLOAK_ADMIN_PASSWORD`.
+
+**Браузерной админки Keycloak снаружи нет** (D-47): прокси отвечает 404 на `/auth/admin*` и
+`/auth/realms/master*`, релиз это проверяет. Пользователей, пароли и группы меняют через
+`kcadm.sh`, как ниже.
 
 Пароли применяются **только при первом старте Keycloak**. Если поменять их в `.env`
-потом, Keycloak этого не увидит. Менять пароль надо через админку или `kcadm.sh`:
+потом, Keycloak этого не увидит. Менять пароль надо через `kcadm.sh`:
 
 ```sh
 docker exec -it regagent-prod-keycloak-1 sh -c '

@@ -8,7 +8,7 @@ Keycloak пускают только людей из команды. Заказ�
 | Путь | Кто пускает |
 | --- | --- |
 | `/`, `/api/*`, `/auth/realms/regagent/*` и всё прочее | никого не спрашивает Cloudflare, вход — Keycloak (realm `regagent`) |
-| `/auth/admin/*`, `/auth/realms/master/*` | Cloudflare Access, только команда |
+| `/auth/admin/*`, `/auth/realms/master/*` | Cloudflare Access, только команда; прокси стенда всё равно отвечает 404 (D-47) |
 
 Названия пунктов меню — по документации Cloudflare на ноябрь 2026. Интерфейс у них
 меняется часто: если пункт называется иначе, ищите по смыслу, порядок шагов тот же.
@@ -60,8 +60,9 @@ Keycloak пускают только людей из команды. Заказ�
 
 ## 3. Закрыть админку Keycloak отдельным приложением
 
-Без этого шага вход в консоль администратора Keycloak (`/auth/admin/`, логин master
-realm) открыт всему интернету, защищает только пароль `KEYCLOAK_ADMIN_PASSWORD`.
+С релиза, где появилось D-47, прокси стенда сам отвечает 404 на эти пути, а релиз это
+проверяет. Шаг 3 — вторая линия: на старых релизах и при ошибке в Caddyfile консоль
+администратора Keycloak (логин master realm) была бы открыта всему интернету.
 
 1. **Access controls** → **Applications** → **Create new application** →
    **Self-hosted and private** → **Add public hostname**.
@@ -82,7 +83,8 @@ B=https://regagent.honey-road.tech
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "$B/"
 curl -s -o /dev/null -w '%{http_code}\n' "$B/api/health"
 curl -s -o /dev/null -w '%{http_code}\n' "$B/auth/realms/regagent/.well-known/openid-configuration"
-# 302 на *.cloudflareaccess.com — админка закрыта
+# админка закрыта: 302 на *.cloudflareaccess.com (шаг 3) или 404 от прокси (D-47).
+# 302 на /auth/admin/master/console/ или 200 — открыта
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "$B/auth/admin/"
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "$B/auth/realms/master/.well-known/openid-configuration"
 ```

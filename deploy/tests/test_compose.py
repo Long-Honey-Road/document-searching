@@ -93,3 +93,33 @@ def test_new_knowledge_settings_have_compose_defaults() -> None:
     assert env["INDEX_JOB_TIMEOUT_S"] == "${INDEX_JOB_TIMEOUT_S:-1800}"
     assert env["LIGHTRAG_LANGUAGE"] == "${LIGHTRAG_LANGUAGE:-Russian}"
     assert env["LIGHTRAG_EXTRACTION_JSON"] == "${LIGHTRAG_EXTRACTION_JSON:-false}"
+
+
+CADDYFILE = Path(__file__).resolve().parents[1] / "caddy" / "Caddyfile"
+KEYCLOAK_ADMIN_PATHS = (
+    "/auth/admin",
+    "/auth/admin/*",
+    "/auth/realms/master",
+    "/auth/realms/master/*",
+)
+
+
+def _block(text: str, header: str) -> str:
+    start = text.index(header)
+    depth = 0
+    for index in range(text.index("{", start), len(text)):
+        depth += {"{": 1, "}": -1}.get(text[index], 0)
+        if depth == 0:
+            return text[start : index + 1]
+    raise AssertionError(f"блок {header!r} не закрыт")
+
+
+def test_proxy_hides_keycloak_admin_console() -> None:
+    """Консоль администратора Keycloak и master realm снаружи не отдаются (D-47): после
+    Bypass в Cloudflare стенд открыт всем, админку ведут через kcadm.sh в контейнере."""
+    auth = _block(CADDYFILE.read_text(), "handle /auth/* {")
+    matcher = next(line.split() for line in auth.splitlines() if "@keycloakAdmin path" in line)
+    assert tuple(matcher[2:]) == KEYCLOAK_ADMIN_PATHS
+    lines = [line.strip() for line in auth.splitlines()]
+    assert "respond @keycloakAdmin 404" in lines
+    assert lines.index("respond @keycloakAdmin 404") < lines.index("reverse_proxy keycloak:8080")

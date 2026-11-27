@@ -113,6 +113,15 @@ def init_env(source: Path, destination: Path, base: str) -> None:
 
 # Локальный адрес самого стенда (значение по умолчанию из .env.example). Общий поиск
 # localhost не годится: библиотеки в сборке содержат свои http://localhost:3000, :8123 и т.п.
+# Что релиз проверяет через прокси на loopback. Админка Keycloak должна быть закрыта (D-47).
+PROBE_PATHS: tuple[tuple[str, set[int]], ...] = (
+    ("/", {200}),
+    ("/api/health", {200}),
+    ("/api/threads", {401, 403}),
+    ("/auth/realms/regagent/.well-known/openid-configuration", {200}),
+    ("/auth/admin/", {404}),
+    ("/auth/realms/master/.well-known/openid-configuration", {404}),
+)
 LOCAL_STAND_URLS = ("http://localhost:8080", "http://127.0.0.1:8080")
 
 
@@ -383,12 +392,7 @@ class Deployment:
         base = proxy["environment"]["PUBLIC_BASE_URL"]
         host = urlsplit(base).netloc
         port = int(proxy["ports"][0]["published"])
-        for path, expected in (
-            ("/", {200}),
-            ("/api/health", {200}),
-            ("/api/threads", {401, 403}),
-            ("/auth/realms/regagent/.well-known/openid-configuration", {200}),
-        ):
+        for path, expected in PROBE_PATHS:
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             try:
                 method = "POST" if path == "/api/threads" else "GET"

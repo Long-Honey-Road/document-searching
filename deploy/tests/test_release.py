@@ -194,3 +194,11 @@ def test_no_tunnel_file_means_no_tunnel_start(tmp_path):
     (tmp_path / "releases" / release).mkdir(parents=True)
     d.start_tunnel(release)
     assert called == []
+
+
+def test_probe_expects_keycloak_admin_hidden() -> None:
+    """Релиз проверяет на живом Caddy, что админка Keycloak за прокси отдаёт 404 (D-47)."""
+    paths = dict(deploy["PROBE_PATHS"])
+    assert paths["/auth/admin/"] == {404}
+    assert paths["/auth/realms/master/.well-known/openid-configuration"] == {404}
+    assert paths["/auth/realms/regagent/.well-known/openid-configuration"] == {200}
