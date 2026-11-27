@@ -273,7 +273,15 @@ LOGIN_PAGE = (
 class FakeStand:
     """Keycloak и API за прокси: ровно то, что видит probe через loopback."""
 
-    def __init__(self, *, password: str = "секрет", assistants: int = 1, threads: int = 200):  # noqa: S107
+    def __init__(  # noqa: S107
+        self,
+        *,
+        password: str = "секрет",
+        assistants: int = 1,
+        threads: int = 200,
+        login_status: int | None = None,
+    ):
+        self.login_status = login_status
         self.password = password
         self.assistants = assistants
         self.threads = threads
@@ -303,6 +311,8 @@ class FakeStand:
         if path.endswith("/login-actions/authenticate"):
             assert "AUTH_SESSION_ID=abc" in headers.get("Cookie", "")
             assert query == {"session_code": ["s"], "tab_id": ["t"]}
+            if self.login_status is not None:
+                return self.login_status, [], b""
             if form.get("password") != [self.password]:
                 return 200, [], b"<span id='input-error'>Invalid username or password.</span>"
             location = f"{BASE}/?state={self.state}&session_state=x&code=the-code"
@@ -399,3 +409,17 @@ def test_rejected_sign_in_is_not_retried(tmp_path: Path, monkeypatch) -> None:
 
 def test_transient_probe_failures_are_retried(tmp_path: Path, monkeypatch) -> None:
     assert _start_with_probe(tmp_path, monkeypatch, OSError("connection refused")) == (False, 61)
+
+
+def test_keycloak_hiccup_on_sign_in_is_retried_not_rejected() -> None:
+    """503 от стартующего Keycloak — повод повторить, а не отклонить релиз."""
+    with pytest.raises(RuntimeError) as error:
+        _login(FakeStand(login_status=503))
+    assert not isinstance(error.value, deploy["LoginRejected"])
+
+
+def test_signed_in_probe_can_be_switched_off(tmp_path: Path, caplog) -> None:
+    env = {"RELEASE_SIGN_IN_PROBE": "off", "KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD": "x"}
+    assert deploy["sign_in_probe_enabled"](env) is False
+    assert deploy["sign_in_probe_enabled"]({}) is True
+    assert deploy["sign_in_probe_enabled"]({"RELEASE_SIGN_IN_PROBE": "on"}) is True

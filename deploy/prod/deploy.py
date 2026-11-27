@@ -305,10 +305,11 @@ def _sign_in(
     action = urljoin(oidc["authorization_endpoint"], form.action)
     status, headers, _ = http.request("POST", action, form={"username": user, "password": password})
     location = headers.get("location", "")
+    if status == 200:
+        # Keycloak снова показал форму: учётные данные не приняты
+        raise LoginRejected(f"вход под {user} не прошёл: пароль в .env не совпадает с Keycloak?")
     if status != 302 or not location.startswith(redirect):
-        raise LoginRejected(
-            f"вход под {user} не прошёл ({status}): пароль в .env не совпадает с Keycloak?"
-        )
+        raise RuntimeError(f"вход под {user}: Keycloak ответил {status}")
     params = parse_qs(urlsplit(location).query)
     if params.get("state") != [state] or not params.get("code"):
         raise RuntimeError("вход: Keycloak вернул неверный state или без code")
@@ -327,6 +328,11 @@ def _sign_in(
         raise RuntimeError(f"вход: обмен кода на токен → {status}")
     token: str = json.loads(data)["access_token"]
     return token
+
+
+def sign_in_probe_enabled(env: dict[str, str]) -> bool:
+    """Аварийный выключатель проверки входа: ``RELEASE_SIGN_IN_PROBE=off`` в .env."""
+    return env.get("RELEASE_SIGN_IN_PROBE", "on").strip().lower() not in {"off", "0", "false"}
 
 
 def check_signed_in(
@@ -591,14 +597,17 @@ class Deployment:
             finally:
                 connection.close()
         env = parse_env((self.root / "configs" / f"{release}.env").read_text())
-        check_signed_in(
-            LoopbackHttp(port, base),
-            f"{base}/auth/realms/regagent",
-            env.get("VITE_OIDC_CLIENT_ID") or "regagent-web",
-            base,
-            PROBE_USER,
-            env.get(PROBE_PASSWORD_VAR, ""),
-        )
+        if not sign_in_probe_enabled(env):
+            log.warning("Проверка входа выключена (RELEASE_SIGN_IN_PROBE=off)")
+        else:
+            check_signed_in(
+                LoopbackHttp(port, base),
+                f"{base}/auth/realms/regagent",
+                env.get("VITE_OIDC_CLIENT_ID") or "regagent-web",
+                base,
+                PROBE_USER,
+                env.get(PROBE_PASSWORD_VAR, ""),
+            )
         indexed = self.compose(
             release,
             "exec",
