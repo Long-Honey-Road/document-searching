@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from langgraph.store.memory import InMemoryStore
 from regagent_backend.graph import build_graph
+from regagent_backend.identity import UserIdentity
 from regagent_common.contracts import TurnReport
 
 from .test_graph import CONFIG, PUNKT, guard, meta, stand_parts
@@ -19,10 +20,10 @@ RUN_CONFIG = {"configurable": {**CONFIG["configurable"], "run_id": "run-7", "thr
 class Sink:
     def __init__(self, fail: bool = False) -> None:
         self.reports: list[TurnReport] = []
-        self.identities: list[object] = []
+        self.identities: list[UserIdentity] = []
         self.fail = fail
 
-    async def record(self, report: TurnReport, identity: object) -> None:
+    async def record(self, report: TurnReport, identity: UserIdentity) -> None:
         self.identities.append(identity)
         if self.fail:
             raise RuntimeError("analytics down")

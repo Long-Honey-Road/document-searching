@@ -59,3 +59,15 @@
 docker compose -f deploy/compose.yaml up -d postgres rabbitmq
 uv run pytest -m integration services/backend/tests/test_qc.py services/knowledge/tests/test_practice.py services/knowledge/tests/test_consumer_pg_mq.py
 ```
+
+## Проверка на хосте после интеграции
+
+В ветке a/fix-abc-checks устранены три проблемы, обнаруженные при проверке объединённого main.
+
+- Исправлены типы тестовых UserIdentity и приёмника итогов хода. Полная команда mypy packages services проходит.
+- Тест Knowledge подписывается на результаты публикации через свою временную очередь. Общая очередь backend может содержать результат предыдущего теста. Чужой ticket_id воспроизводился в общем прогоне, отдельный тест проходил. После исправления общий прогон на PostgreSQL с AGE и RabbitMQ проходит.
+- Проверка релиза разбирает discovery как JSON только при HTTP 200. Закрытый master realm возвращает пустой 404. Поведение закреплено тестом test_probe_accepts_empty_404_for_master_discovery.
+
+Результаты проверки ветки: 488 обычных тестов и 65 проверок integration/leak прошли. Ruff и полная проверка типов чистые.
+
+По решению пользователя 28.11 вывод области по одной тематике вопроса отложен. В ближайшей версии остаются прямые указания области и накопление сигналов по D-55.

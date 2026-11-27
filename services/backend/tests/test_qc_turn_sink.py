@@ -14,7 +14,11 @@ from regagent_common.contracts import TurnReport
 
 RUN = "6f1c2e9a-0000-4000-8000-000000000001"
 IDENTITY = UserIdentity(
-    sub="reader", username="reader", levels=frozenset({"public"}), groups=(), roles=()
+    sub="reader",
+    username="reader",
+    levels=frozenset({"public"}),
+    groups=frozenset(),
+    roles=frozenset(),
 )
 
 

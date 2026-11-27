@@ -634,7 +634,7 @@ class Deployment:
                 response = connection.getresponse()
                 if response.status not in expected:
                     raise RuntimeError(f"{path} → {response.status}")
-                if path.endswith("openid-configuration"):
+                if response.status == 200 and path.endswith("openid-configuration"):
                     issuer = json.loads(response.read())["issuer"]
                     if issuer != f"{base}/auth/realms/regagent":
                         raise RuntimeError("неверный OIDC issuer")

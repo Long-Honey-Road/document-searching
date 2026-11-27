@@ -118,8 +118,10 @@ async def test_broker_delivers_publication_and_persistent_result(
     async with IndexQueue(url) as queue, await aio_pika.connect(url) as connection:
         channel = await connection.channel()
         exchange = await channel.get_exchange("regagent")
-        # Результаты публикации идут в общую очередь backend (D-61)
-        results = await channel.get_queue(broker.QC_EVENTS)
+        # Собственная подписка получает только результаты, отправленные после её создания.
+        # Общая очередь backend может содержать результаты предыдущих тестов.
+        results = await channel.declare_queue(exclusive=True, auto_delete=True)
+        await results.bind(exchange, routing_key=broker.PRACTICE_PUBLISHED)
         worker = asyncio.create_task(
             run_practice_consumer(queue, practices, retries=0, timeout_s=5)
         )
