@@ -172,6 +172,10 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+PRACTICE_TEXT_MAX = 12000
+PRACTICE_BINDS_MAX = 16
+
+
 class PracticePublish(_Model):
     message_id: str = Field(default_factory=_new_id)
     created_at: datetime = Field(default_factory=_now)
@@ -179,8 +183,8 @@ class PracticePublish(_Model):
     ticket_id: str = Field(min_length=1)
     practice_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$")
     revision: int = Field(ge=1)
-    text: str = Field(min_length=1)
-    binds: list[PracticeBinding] = Field(min_length=1, max_length=16)
+    text: str = Field(min_length=1, max_length=PRACTICE_TEXT_MAX)
+    binds: list[PracticeBinding] = Field(min_length=1, max_length=PRACTICE_BINDS_MAX)
     mode: Mode
     approved_by: str = Field(min_length=1)
     approved_levels: list[str] = Field(min_length=1)

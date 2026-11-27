@@ -330,8 +330,8 @@ class QCStore:
                 ticket_id=ticket_id,
                 practice_id=ticket.practice_id,
                 revision=revision,
-                admin_id=identity.sub,
-                admin_levels=levels,
+                approved_by=identity.sub,
+                approved_levels=levels,
                 **draft.model_dump(),
             )
             await conn.execute(
@@ -434,60 +434,50 @@ class QCStore:
         return True
 
     async def apply_recheck(self, event: PracticeRecheck) -> int:
-        opened: list[TicketDetail] = []
+        """Открывает заявку на перепроверку практики; повтор того же сигнала — без новой заявки."""
         async with self.pool.connection() as conn, conn.transaction():
             recorded = await conn.execute(
                 "INSERT INTO qc_recheck_events (id) VALUES (%s) ON CONFLICT DO NOTHING",
-                (event.message_id,),
+                (uuid_for_key(f"recheck:{event.message_id}"),),
             )
             if not recorded.rowcount:
                 return 0
-            rows = await (
+            row = await (
                 await conn.execute(
                     """
-                SELECT DISTINCT ON (practice_id) * FROM qc_tickets
-                WHERE practice_id = ANY(%s) AND status = 'published'
-                ORDER BY practice_id, revision DESC
+                SELECT * FROM qc_tickets
+                WHERE id = %s AND practice_id = %s AND revision = %s AND status = 'published'
                 """,
-                    (event.practice_ids,),
+                    (event.ticket_id, event.practice_id, event.revision),
                 )
-            ).fetchall()
-            for row in rows:
-                original = TicketDetail.model_validate(row)
-                if original.draft is None or not any(
-                    item.doc_id == event.doc_id
-                    and (event.reason != "new_version" or item.version < (event.version or 0))
-                    for item in original.draft.binds
-                ):
-                    continue
-                # Ключ сохраняется и при повторной отправке того же сигнала с новым message_id.
-                key = f"{original.id}:{event.reason}:{event.version}:{event.doc_id}"
-                payload = CreateTicket(
+            ).fetchone()
+            if row is None:
+                return 0
+            original = TicketDetail.model_validate(row)
+            if original.draft is None or all(
+                item.doc_id != event.doc_id for item in original.draft.binds
+            ):
+                return 0
+            key = f"{original.id}:{event.reason}:{event.doc_id}:{event.revision}"
+            new_row, created = await self.insert_ticket(
+                conn,
+                CreateTicket(
                     submission_id=str(uuid_for_key(key)),
                     question=original.question,
                     comment=original.comment,
-                )
-                new_row, created = await self.insert_ticket(
-                    conn,
-                    payload,
-                    author_id=row["author_id"],
-                    scope_levels=row["scope_levels"],
-                    actor_id="knowledge",
-                    kind="recheck",
-                    prior=original,
-                    recheck=RecheckDetails(
-                        doc_id=event.doc_id,
-                        reason=event.reason,
-                        version=event.version if event.reason == "new_version" else None,
-                    ),
-                )
-                if created:
-                    opened.append(TicketDetail.model_validate(new_row))
-        for ticket in opened:
-            qc_event(
-                "qc.ticket.recheck", "new", ticket_id=ticket.id, practice_id=ticket.practice_id
+                ),
+                author_id=row["author_id"],
+                scope_levels=row["scope_levels"],
+                actor_id="knowledge",
+                kind="recheck",
+                prior=original,
+                recheck=RecheckDetails(doc_id=event.doc_id, reason=event.reason, version=None),
             )
-        return len(opened)
+        if not created:
+            return 0
+        ticket = TicketDetail.model_validate(new_row)
+        qc_event("qc.ticket.recheck", "new", ticket_id=ticket.id, practice_id=ticket.practice_id)
+        return 1
 
 
 def uuid_for_key(key: str) -> UUID:

@@ -18,7 +18,13 @@ from regagent_backend.qc_models import (
     PublishDraft,
 )
 from regagent_backend.qc_store import Conflict, Connection, NotFound, QCStore
-from regagent_backend.qc_worker import COMMAND_QUEUE, EXCHANGE, RESULT_KEY, broker_session
+from regagent_backend.qc_worker import (
+    COMMAND_QUEUE,
+    EXCHANGE,
+    RESULT_KEY,
+    broker_session,
+    declare_topology,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -111,7 +117,7 @@ async def test_retry_result_and_recheck(store: QCStore) -> None:
     assert not await store.dispatch_one(broker)
     assert sent[0] == sent[1]
     command = sent[0]
-    assert command.admin_id == ADMIN.sub and command.admin_levels == ["public"]
+    assert command.approved_by == ADMIN.sub and command.approved_levels == ["public"]
 
     result = PracticeResult.model_validate(
         {
@@ -132,14 +138,18 @@ async def test_retry_result_and_recheck(store: QCStore) -> None:
     event = PracticeRecheck.model_validate(
         {
             "type": "qc.events",
-            "message_id": uuid4(),
+            "message_id": f"recheck:{command.practice_id}:{command.revision}",
             "created_at": datetime.now(UTC),
             "kind": "recheck",
-            "reason": "new_version",
+            "ticket_id": ticket.id,
+            "practice_id": command.practice_id,
+            "revision": command.revision,
             "doc_id": "rule",
-            "version": 3,
-            "practice_ids": [command.practice_id],
+            "reason": "new_version",
         }
+    )
+    assert not await store.apply_recheck(
+        event.model_copy(update={"message_id": "x", "revision": 9})
     )
     assert await store.apply_recheck(event) == 1
     assert await store.apply_recheck(event) == 0
@@ -246,7 +256,7 @@ async def test_rabbitmq_command_and_result_roundtrip(store: QCStore) -> None:
         exchange = await channel.declare_exchange(
             EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True
         )
-        commands = await channel.declare_queue(COMMAND_QUEUE, durable=True)
+        commands = (await declare_topology(channel, exchange))[COMMAND_QUEUE]
         worker = asyncio.create_task(broker_session(store, url))
         try:
             async with asyncio.timeout(12), commands.iterator() as messages:
@@ -254,7 +264,7 @@ async def test_rabbitmq_command_and_result_roundtrip(store: QCStore) -> None:
                 async with received.process():
                     command = PracticePublish.model_validate_json(received.body)
                     assert command.ticket_id == ticket.id
-                    assert command.admin_id == ADMIN.sub and command.revision == 1
+                    assert command.approved_by == ADMIN.sub and command.revision == 1
                 result = PracticeResult(
                     message_id=uuid4(),
                     created_at=datetime.now(UTC),

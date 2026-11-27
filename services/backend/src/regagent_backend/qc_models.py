@@ -1,4 +1,8 @@
-"""HTTP-модели ОКК и адаптер протокола публикации для потока A."""
+"""HTTP-модели ОКК и сообщения публикации практики.
+
+Сообщения повторяют общий контракт ``regagent_common.contracts`` (D-61), но с типами
+backend (UUID), чтобы мусор из очереди отвергался до записи в БД.
+"""
 
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
@@ -12,10 +16,12 @@ from pydantic import (
     StringConstraints,
     model_validator,
 )
+from regagent_common.contracts import PRACTICE_BINDS_MAX, PRACTICE_TEXT_MAX, PracticeBinding
 
 TicketStatus = Literal["new", "publishing", "published", "rejected", "publish_failed"]
 Mode = Literal["clarifies", "overrides"]
 Origin = Literal["employee", "analytics", "recheck"]
+RecheckReason = Literal["new_version", "access_changed", "deleted", "content_changed"]
 NO_NUL = r"^[^\x00]*$"
 Identifier = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160, pattern=NO_NUL)
@@ -45,14 +51,22 @@ class Binding(InputModel):
     version: Revision
     clause: Identifier
 
+    @model_validator(mode="after")
+    def knowledge_accepts(self) -> Self:
+        # Те же правила, что у knowledge: иначе публикация упадёт уже после отправки
+        PracticeBinding.model_validate(self.model_dump())
+        return self
+
 
 class PublishDraft(InputModel):
     text: Annotated[
         str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=12000, pattern=NO_NUL),
+        StringConstraints(
+            strip_whitespace=True, min_length=1, max_length=PRACTICE_TEXT_MAX, pattern=NO_NUL
+        ),
     ]
     mode: Mode
-    binds: Annotated[list[Binding], Field(min_length=1, max_length=20)]
+    binds: Annotated[list[Binding], Field(min_length=1, max_length=PRACTICE_BINDS_MAX)]
 
     @model_validator(mode="after")
     def unique_bindings(self) -> Self:
@@ -82,7 +96,7 @@ class ReviewSummary(TicketSummary):
 
 
 class RecheckDetails(BaseModel):
-    reason: Literal["new_version", "access_changed", "deleted"]
+    reason: RecheckReason
     doc_id: Identifier
     version: Revision | None
 
@@ -108,8 +122,8 @@ class PracticePublish(Message, PublishDraft):
     ticket_id: UUID
     practice_id: UUID
     revision: Revision
-    admin_id: Identifier
-    admin_levels: list[Identifier]
+    approved_by: Identifier
+    approved_levels: Annotated[list[Identifier], Field(min_length=1)]
 
 
 class PracticeResult(Message):
@@ -127,16 +141,15 @@ class PracticeResult(Message):
         return self
 
 
-class PracticeRecheck(Message):
+class PracticeRecheck(InputModel):
+    """Перепроверка одной опубликованной практики: knowledge шлёт по сообщению на практику."""
+
+    message_id: Identifier  # детерминированный у knowledge: recheck:<practice>:<revision>
+    created_at: AwareDatetime
     type: Literal["qc.events"]
     kind: Literal["recheck"]
-    reason: Literal["new_version", "access_changed", "deleted"]
+    ticket_id: UUID
+    practice_id: UUID
+    revision: Revision
     doc_id: Identifier
-    version: Revision | None
-    practice_ids: Annotated[list[UUID], Field(max_length=200)]
-
-    @model_validator(mode="after")
-    def require_version(self) -> Self:
-        if self.reason != "deleted" and self.version is None:
-            raise ValueError("document version is required")
-        return self
+    reason: RecheckReason

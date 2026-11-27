@@ -5,23 +5,29 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import aio_pika
 from aegra_api.core.database import db_manager
 from aio_pika.abc import AbstractExchange, AbstractIncomingMessage, AbstractQueue
 from fastapi import FastAPI
 from pydantic import ValidationError
+from regagent_common import broker
 
 from regagent_backend.qc_analytics import Analytics
 from regagent_backend.qc_models import PracticePublish, PracticeRecheck, PracticeResult
 from regagent_backend.qc_store import QCStore, qc_event
 from regagent_backend.settings import BackendSettings
 
-EXCHANGE = "regagent"
-COMMAND_QUEUE = "practice.publish"
-EVENT_QUEUE = "qc.events"
-EVENT_DLQ = "qc.events.dlq"
-RESULT_KEY = "practice.published"
+EXCHANGE = broker.EXCHANGE
+COMMAND_QUEUE = broker.PRACTICE_PUBLISH
+EVENT_QUEUE = broker.QC_EVENTS
+RESULT_KEY = broker.PRACTICE_PUBLISHED
+
+
+async def declare_topology(channel: Any, exchange: Any) -> dict[str, Any]:
+    """Общие очереди с knowledge (D-61); своих у backend нет."""
+    return await broker.declare_shared(channel, exchange)
 
 
 async def _send(exchange: AbstractExchange, command: PracticePublish) -> None:
@@ -64,22 +70,8 @@ async def broker_session(store: QCStore, url: str) -> None:
         exchange = await channel.declare_exchange(
             EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True
         )
-        # Очередь должна существовать и до первого запуска Knowledge.
-        commands = await channel.declare_queue(COMMAND_QUEUE, durable=True)
-        await commands.bind(exchange, routing_key=COMMAND_QUEUE)
-        dead_letters = await channel.declare_queue(EVENT_DLQ, durable=True)
-        await dead_letters.bind(exchange, routing_key=EVENT_DLQ)
-        events = await channel.declare_queue(
-            EVENT_QUEUE,
-            durable=True,
-            arguments={
-                "x-dead-letter-exchange": EXCHANGE,
-                "x-dead-letter-routing-key": EVENT_DLQ,
-                "x-single-active-consumer": True,
-            },
-        )
-        await events.bind(exchange, routing_key=RESULT_KEY)
-        await events.bind(exchange, routing_key=EVENT_QUEUE)
+        # Очереди должны существовать и до первого запуска Knowledge
+        events = (await declare_topology(channel, exchange))[EVENT_QUEUE]
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(_consume(store, events))
             tasks.create_task(_dispatch(store, exchange))

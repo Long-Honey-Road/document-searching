@@ -7,11 +7,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 
 import aio_pika
 from aio_pika.abc import AbstractExchange, AbstractIncomingMessage, AbstractQueue
 from pydantic import ValidationError
+from regagent_common import broker
 from regagent_common.contracts import (
     IndexJob,
     PracticePublicationResult,
@@ -26,10 +27,23 @@ from .practice import PracticeService
 
 log = logging.getLogger(__name__)
 
-_EXCHANGE = "regagent"
+_EXCHANGE = broker.EXCHANGE
 _INDEX_JOBS = "index.jobs"
-_PRACTICE_PUBLISH = "practice.publish"
-_DLQ = "regagent.dlq"
+
+
+async def declare_topology(channel: Any, exchange: Any) -> dict[str, Any]:
+    """Общие очереди (D-61) и собственная ``index.jobs``."""
+    queues = await broker.declare_shared(channel, exchange)
+    jobs = await channel.declare_queue(
+        _INDEX_JOBS,
+        durable=True,
+        arguments={
+            "x-dead-letter-exchange": broker.EXCHANGE,
+            "x-dead-letter-routing-key": broker.DLQ,
+        },
+    )
+    await jobs.bind(exchange, routing_key=_INDEX_JOBS)
+    return {**queues, _INDEX_JOBS: jobs}
 
 
 class IndexQueue:
@@ -49,35 +63,14 @@ class IndexQueue:
             exchange = await channel.declare_exchange(
                 _EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True
             )
-            dead_letters = await channel.declare_queue(_DLQ, durable=True)
-            await dead_letters.bind(exchange, routing_key=_DLQ)
-            jobs = await channel.declare_queue(
-                _INDEX_JOBS,
-                durable=True,
-                arguments={
-                    "x-dead-letter-exchange": _EXCHANGE,
-                    "x-dead-letter-routing-key": _DLQ,
-                },
-            )
-            await jobs.bind(exchange, routing_key=_INDEX_JOBS)
-            self.practices = await channel.declare_queue(
-                _PRACTICE_PUBLISH,
-                durable=True,
-                arguments={
-                    "x-dead-letter-exchange": _EXCHANGE,
-                    "x-dead-letter-routing-key": _DLQ,
-                },
-            )
-            await self.practices.bind(exchange, routing_key=_PRACTICE_PUBLISH)
-            for key in ("practice.published", "qc.events"):
-                event_queue = await channel.declare_queue(key, durable=True)
-                await event_queue.bind(exchange, routing_key=key)
+            queues = await declare_topology(channel, exchange)
         except BaseException:
             await connection.close()
             raise
         self._connection = connection
         self._exchange = exchange
-        self.jobs = jobs
+        self.jobs = queues[_INDEX_JOBS]
+        self.practices = queues[broker.PRACTICE_PUBLISH]
         return self
 
     async def __aexit__(
