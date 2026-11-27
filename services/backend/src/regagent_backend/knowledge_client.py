@@ -18,6 +18,12 @@ from regagent_common.contracts import (
 log = logging.getLogger(__name__)
 
 
+def admin_http(timeout_s: float) -> httpx.AsyncClient:
+    """HTTP-клиент служебных маршрутов. Отдельная функция модуля: Aegra загружает routes.py
+    по пути файла, поэтому подменять транспорт в тестах можно только здесь."""
+    return httpx.AsyncClient(timeout=timeout_s)
+
+
 class KnowledgeUnavailable(Exception):
     """Поиск или чтение недоступны."""
 
@@ -65,3 +71,17 @@ class KnowledgeClient:
         except (httpx.HTTPError, ValidationError) as exc:
             log.warning("knowledge refs unavailable: %s", type(exc).__name__)
             raise KnowledgeUnavailable("refs unavailable") from exc
+
+    async def admin(
+        self, method: str, path: str, params: dict[str, str | int] | None = None
+    ) -> httpx.Response:
+        """Служебный маршрут knowledge как есть; сетевые ошибки — ``KnowledgeUnavailable``."""
+        if not path.startswith("/admin/"):
+            raise ValueError("only /admin routes")
+        try:
+            return await self.http.request(
+                method, self.base_url + path, params=params, headers=self.headers
+            )
+        except httpx.HTTPError as exc:
+            log.warning("knowledge admin unavailable: %s", type(exc).__name__)
+            raise KnowledgeUnavailable("admin unavailable") from exc

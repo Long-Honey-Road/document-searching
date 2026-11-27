@@ -66,6 +66,10 @@ flowchart LR
 - Права в памяти не хранятся никогда.
 - `GET /me/memory`, `DELETE /me/memory/{key}` — пользователь видит и удаляет свою память.
 
+## Служебные маршруты (P2-B3)
+
+`GET /admin/documents`, `GET /admin/jobs?status=&limit=`, `POST /admin/jobs/{id}/retry`, `GET /admin/review` — те же пути knowledge (`dev_docs/06-contracts.md`). Только роль `admin` в токене: без токена 401, с токеном без роли 403, запрос до knowledge не доходит. Backend идёт в knowledge с сервисным токеном, токен пользователя туда не передаётся. Ответ knowledge проверяется по моделям `regagent_common.contracts`. 404/409/422 knowledge передаются как есть, сеть и прочие ответы → 502 (D-51).
+
 ## ОКК
 
 Таблицы в БД `app`:
