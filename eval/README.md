@@ -16,10 +16,9 @@ JSONL записывается по мере получения ответов. 
 `eval/behavior-dialogues.yaml` содержит 15 ходов. В наборе есть прямой ответ, переформулировка, ответ из двух документов, короткое уточнение области, уточнение этапа и предмета, пробел в регламенте, текст черновика по просьбе и ручная отправка вопроса в ОКК. Каждый ход задаёт ожидаемый исход и результат для ручного сравнения. Для отдельных ходов проверяются обязательные и запрещённые фразы и отсутствие источников.
 
 ```bash
+uv run python -m scripts.eval.run --questions eval/behavior-dialogues.yaml --validate-only
 uv run python -m scripts.eval.run --questions eval/behavior-dialogues.yaml \
-  --manifest data/demo_corpus/manifest.yaml --validate-only
-uv run python -m scripts.eval.run --questions eval/behavior-dialogues.yaml \
-  --manifest data/demo_corpus/manifest.yaml --env-file .env --stand http://localhost:8080
+  --env-file .env --stand http://localhost:8080
 ```
 
 Используйте манифест того же корпуса и редакции, что на проверяемом стенде. Последовательные ходы одного сценария идут в одном диалоге. В начале сценария проверочная учётка очищается от памяти об области. JSONL сохраняет и успешные, и неуспешные ответы. Markdown показывает сводку и подробности провалов. Результаты сравнивают по смыслу, выбранным источникам и тому, к какому действию агент направляет сотрудника. [Наблюдения со стенда 28.11](behavior-notes-2026-11-28.md)
