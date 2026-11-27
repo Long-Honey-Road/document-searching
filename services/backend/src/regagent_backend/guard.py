@@ -33,6 +33,7 @@ async def invoke_structured[T: BaseModel](
     mode: StructuredMode,
     prompt: str,
     data: dict[str, object],
+    metadata: dict[str, str] | None = None,
 ) -> T:
     classifier = (
         model.with_structured_output(schema, method="json_schema", strict=True)
@@ -45,7 +46,8 @@ async def invoke_structured[T: BaseModel](
         # Изолируем события провайдера и результат классификации от стрима Aegra.
         return await create_task(
             classifier.ainvoke(
-                [SystemMessage(prompt), HumanMessage(task)], config={"tags": [TAG_NOSTREAM]}
+                [SystemMessage(prompt), HumanMessage(task)],
+                config={"tags": [TAG_NOSTREAM], "metadata": dict(metadata or {})},
             ),
             context=Context(),
         )
@@ -67,6 +69,7 @@ async def classify(
     area_codes: list[str],
     awaiting_area: bool,
     mode: StructuredMode,
+    run: dict[str, str] | None = None,
 ) -> GuardResult:
     return await invoke_structured(
         model,
@@ -74,4 +77,5 @@ async def classify(
         mode,
         (PROMPTS / "guard.md").read_text(encoding="utf-8"),
         {"области": area_codes, "ждём уточнения области": awaiting_area, "сообщения": questions},
+        {"llm_operation": "guard", **(run or {})},
     )

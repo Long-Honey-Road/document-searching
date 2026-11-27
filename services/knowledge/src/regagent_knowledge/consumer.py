@@ -13,6 +13,7 @@ from aio_pika.abc import AbstractExchange, AbstractIncomingMessage, AbstractQueu
 from pydantic import ValidationError
 from regagent_common.contracts import IndexJob
 
+from .events import CURRENT_JOB
 from .jobs import JobProgress
 from .pipeline import PipelineDeps, process_job
 
@@ -110,35 +111,41 @@ async def _process_message(message: AbstractIncomingMessage, deps: PipelineDeps)
                 await message.reject(requeue=False)
                 return
         attempt = 1 if state is None else state.attempts + int(state.status != "indexing")
-        while True:
-            progress = JobProgress(job, deps.registry, attempt)
-            await deps.registry.save_job(
-                job, "indexing", attempt, current_step=progress.current_step
-            )
-            start = monotonic()
-            progress.event("job", "start", 0)
-            try:
-                await _attempt(job, deps, progress)
-            except Exception as exc:
-                error = str(exc)
-                exhausted = attempt > deps.settings.index_max_retries
-                status = "failed" if exhausted else "retrying"
-                await deps.registry.save_job(
-                    job, status, attempt, error=error, steps=progress.steps
-                )
-                progress.event("job", "failed", monotonic() - start)
-                progress.emit_result(status, monotonic() - start, type(exc).__name__)
-                log.warning("задача %s, попытка %d: %s", job.job_id, attempt, error)
-                if exhausted:
-                    await message.reject(requeue=False)
-                    return
-                await asyncio.sleep(attempt)
-                attempt += 1
-            else:
-                await deps.registry.save_job(job, "succeeded", attempt, steps=progress.steps)
-                progress.event("job", "done", monotonic() - start)
-                progress.emit_result("succeeded", monotonic() - start)
+        token = CURRENT_JOB.set(job.job_id)  # вызовы модели внутри задачи несут job_id
+        try:
+            await _run_attempts(job, deps, message, attempt)
+        finally:
+            CURRENT_JOB.reset(token)
+
+
+async def _run_attempts(
+    job: IndexJob, deps: PipelineDeps, message: AbstractIncomingMessage, attempt: int
+) -> None:
+    while True:
+        progress = JobProgress(job, deps.registry, attempt)
+        await deps.registry.save_job(job, "indexing", attempt, current_step=progress.current_step)
+        start = monotonic()
+        progress.event("job", "start", 0)
+        try:
+            await _attempt(job, deps, progress)
+        except Exception as exc:
+            error = str(exc)
+            exhausted = attempt > deps.settings.index_max_retries
+            status = "failed" if exhausted else "retrying"
+            await deps.registry.save_job(job, status, attempt, error=error, steps=progress.steps)
+            progress.event("job", "failed", monotonic() - start)
+            progress.emit_result(status, monotonic() - start, type(exc).__name__)
+            log.warning("задача %s, попытка %d: %s", job.job_id, attempt, error)
+            if exhausted:
+                await message.reject(requeue=False)
                 return
+            await asyncio.sleep(attempt)
+            attempt += 1
+        else:
+            await deps.registry.save_job(job, "succeeded", attempt, steps=progress.steps)
+            progress.event("job", "done", monotonic() - start)
+            progress.emit_result("succeeded", monotonic() - start)
+            return
 
 
 async def run_consumer(queue: IndexQueue, deps: PipelineDeps) -> None:

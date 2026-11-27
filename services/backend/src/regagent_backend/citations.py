@@ -45,6 +45,7 @@ async def verify_comparison(
     cited: list[Fragment],
     model: BaseChatModel,
     mode: StructuredMode,
+    run: dict[str, str] | None = None,
 ) -> bool:
     result = await invoke_structured(
         model,
@@ -63,6 +64,7 @@ async def verify_comparison(
                 for fragment in cited
             ],
         },
+        {"llm_operation": "comparison_check", **(run or {})},
     )
     return result.supported
 

@@ -18,7 +18,7 @@ import logging
 import re
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
@@ -95,6 +95,21 @@ class EventLog:
         except Exception:  # журнал не должен ронять сервис
             logging.getLogger(__name__).exception("event log failed")
 
+    def emit_fields(
+        self,
+        event: str,
+        fields: Mapping[str, Value],
+        *,
+        status: str,
+        duration_ms: float | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """То же, что ``emit``, когда поля собраны словарём."""
+        try:
+            self._emit(event, status, duration_ms, error_code, dict(fields))
+        except Exception:  # журнал не должен ронять сервис
+            logging.getLogger(__name__).exception("event log failed")
+
     def _emit(
         self,
         event: str,
@@ -157,3 +172,33 @@ class EventLog:
             error_code=str(error_code) if error_code is not None else None,
             **extra,
         )
+
+
+def timeout_status(error: BaseException) -> str:
+    """``timeout`` для таймаутов провайдера и asyncio, иначе ``error``."""
+    name = type(error).__name__
+    return "timeout" if isinstance(error, TimeoutError) or "Timeout" in name else "error"
+
+
+def usage_fields(counts: dict[str, object] | None) -> dict[str, Value]:
+    """Токены вызова модели из ``usage`` провайдера (OpenAI-совместимые имена или
+    ``usage_metadata`` LangChain). Нет данных — ``usage_source=unknown`` без чисел."""
+    if not counts:
+        return {"usage_source": "unknown"}
+
+    def number(*names: str) -> int | None:
+        for name in names:
+            value = counts.get(name)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        return None
+
+    found = {
+        "input_tokens": number("input_tokens", "prompt_tokens"),
+        "output_tokens": number("output_tokens", "completion_tokens"),
+        "total_tokens": number("total_tokens"),
+        "cached_tokens": number("cached_tokens", "cache_read"),
+    }
+    present: dict[str, Value] = {key: value for key, value in found.items() if value is not None}
+    present["usage_source"] = "provider" if present else "unknown"
+    return present

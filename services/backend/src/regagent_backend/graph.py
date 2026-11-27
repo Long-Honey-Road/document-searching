@@ -46,6 +46,7 @@ from regagent_backend.memory import MemoryService, build_memory_tools
 from regagent_backend.rate_limit import AccountRateLimit
 from regagent_backend.settings import BackendSettings
 from regagent_backend.tools import SearchRun, build_search_tools
+from regagent_backend.usage import UsageCallback
 
 log = logging.getLogger(__name__)
 AreaSource = Literal["memory", "question", "asked", "none"]
@@ -110,6 +111,7 @@ def _runtime_deps() -> AgentDeps:
             max_retries=0,
             use_responses_api=False,
             disable_streaming=True,
+            callbacks=[UsageCallback(role)],
         )
 
     http = httpx.AsyncClient(timeout=settings.KNOWLEDGE_TIMEOUT_S)
@@ -293,6 +295,7 @@ async def _answer(
                         [run.fragments[citation] for citation in extract_citations(text)],
                         deps.guard_model,
                         settings.GUARD_MODE,
+                        ids,
                     )
                     event["status"] = "ok" if supported else "rejected"
             except (OpenAIError, OutputParserException, ValueError) as exc:
@@ -347,7 +350,7 @@ async def _turn(
     try:
         with events.timed("guard.classify", **ids):
             guard = await classify(
-                deps.guard_model, questions, settings.AREA_CODES, awaiting, settings.GUARD_MODE
+                deps.guard_model, questions, settings.AREA_CODES, awaiting, settings.GUARD_MODE, ids
             )
     except (OpenAIError, OutputParserException, ValueError) as exc:
         log.warning("guard failed: %s", type(exc).__name__)

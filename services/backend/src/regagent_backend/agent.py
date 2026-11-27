@@ -77,6 +77,7 @@ async def generate_answer(
         "configurable": {"langgraph_auth_user": identity_to_user_dict(identity), **(run or {})},
         "recursion_limit": max_steps,
         "tags": [TAG_NOSTREAM],
+        "metadata": {"llm_operation": "answer", **(run or {})},
     }
     inputs: InputAgentState = {"messages": list(messages)}
     result = await create_task(agent.ainvoke(inputs, config=config), context=Context())
