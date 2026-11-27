@@ -18,3 +18,12 @@ docker compose --env-file .env -f deploy/compose.yaml --profile local-reranker u
 Если используете TEI и для эмбеддингов, выберите профиль `local-embeddings`,
 укажите `EMBEDDINGS_BASE_URL=http://embeddings:80` и имя своей модели Hugging Face
 в `EMBEDDINGS_MODEL`.
+
+## Сквозные проверки
+
+На тестовом стенде с чистой памятью демо-учёток и первой редакцией корпуса выполните
+`uv run pytest -m e2e`. Проверки используют браузерный поток OIDC с PKCE и LangGraph SDK.
+Тест смены редакции обновляет синтетический регламент до второй редакции в активном корпусе.
+На другом checkout укажите расположение исходных образцов через `REGAGENT_E2E_SAMPLES_DIR`.
+Путь к файлу с локальными настройками задаётся `REGAGENT_E2E_ENV_FILE`,
+путь к монтируемому корпусу — `REGAGENT_E2E_DOCS_DIR`.
