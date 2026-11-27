@@ -72,7 +72,7 @@ async def deny_client_store(ctx: Auth.types.AuthContext, value: dict[str, Any]) 
 def _load_levels(settings: BackendSettings) -> LevelsResolver:
     from regagent_common.access import AccessLevels  # P0-2
 
-    return AccessLevels.from_yaml(settings.ACCESS_LEVELS_FILE)  # type: ignore[no-any-return]
+    return AccessLevels.from_yaml(settings.ACCESS_LEVELS_FILE)
 
 
 _authenticator: Authenticator | None = None
@@ -81,7 +81,7 @@ _authenticator: Authenticator | None = None
 async def _default_authenticator(headers: dict[str, str]) -> dict[str, Any]:
     global _authenticator
     if _authenticator is None:
-        settings = BackendSettings()  # type: ignore[call-arg]  # значения из .env
+        settings = BackendSettings()  # значения из .env
         cache = JwksCache(
             settings.KEYCLOAK_JWKS_URL,
             http=httpx.AsyncClient(timeout=10),

@@ -20,7 +20,7 @@ def settings(monkeypatch: pytest.MonkeyPatch, issuer: str, audience: str) -> Bac
     monkeypatch.setenv("KEYCLOAK_AUDIENCE", audience)
     monkeypatch.setenv("KEYCLOAK_JWKS_URL", JWKS_URL)
     monkeypatch.setenv("AREA_CODES", "ДИБ,ДБРЦТ,общий")
-    return BackendSettings(_env_file=None)  # type: ignore[call-arg]
+    return BackendSettings(_env_file=None)
 
 
 class Clock:
