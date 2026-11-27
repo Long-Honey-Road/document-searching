@@ -61,5 +61,5 @@ def test_factory_wires_lightrag(
     assert rag.doc_status_storage == "PGDocStatusStorage"
     assert rag.entity_extract_max_gleaning == 0
     assert rag.llm_model_max_async == s.llm_max_concurrency
-    # LightRAG не дорезает наши фрагменты: его предел не меньше нашего (D-21).
+    # LightRAG не дорезает наши фрагменты: его предел не меньше нашего (D-28).
     assert rag.chunk_token_size is not None and rag.chunk_token_size >= s.chunk_max_tokens

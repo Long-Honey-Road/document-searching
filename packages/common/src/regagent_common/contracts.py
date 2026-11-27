@@ -64,12 +64,6 @@ class Area(_Model):
     synonyms: list[str] = Field(default_factory=list)
 
 
-class AreasResponse(_Model):
-    """``GET /areas`` knowledge — справочник областей для backend (проверка памяти)."""
-
-    areas: list[Area]
-
-
 # --- RabbitMQ ---
 
 

@@ -28,8 +28,8 @@ def build_lightrag(
     graph_storage: str = "PGGraphStorage",
 ) -> LightRAG:
     """``tokenizer=None`` — tiktoken LightRAG; на стенде его словарь должен лежать в кэше
-    образа (D-24). ``chunk_token_size`` берётся с запасом: LightRAG не должен дорезать наши
-    фрагменты, а при превышении бросает ошибку (D-21)."""
+    образа (D-31). ``chunk_token_size`` берётся с запасом: LightRAG не должен дорезать наши
+    фрагменты, а при превышении бросает ошибку (D-28)."""
     configure_postgres_env(settings)
     return LightRAG(
         working_dir=str(settings.lightrag_working_dir),

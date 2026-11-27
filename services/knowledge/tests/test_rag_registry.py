@@ -149,7 +149,7 @@ async def test_query_returns_only_chunk_texts(setup: Any) -> None:
 
 
 async def test_query_without_keywords_uses_query_as_keyword(setup: Any) -> None:
-    # Ключевые слова всегда снаружи: LightRAG не должен звать LLM на их извлечение (D-22).
+    # Ключевые слова всегда снаружи: LightRAG не должен звать LLM на их извлечение (D-29).
     reg, log, _ = setup
     await reg.start()
     await reg.query("public", "кто назначает РП", 5)

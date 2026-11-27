@@ -2,7 +2,7 @@
 
 Первым инициализируется пустой служебный workspace ``lvl__sentinel``: если какой-то путь
 LightRAG упадёт на workspace по умолчанию процесса, он попадёт в пустоту, а не в чужой
-уровень. Решения по работе с LightRAG — D-21…D-23 в dev_docs/09-decisions.md.
+уровень. Решения по работе с LightRAG — D-28…D-30 в dev_docs/09-decisions.md.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from lightrag import QueryParam
 log = logging.getLogger(__name__)
 
 SENTINEL_WORKSPACE = "lvl__sentinel"
-# Разделитель фрагментов внутри документа, который отдаётся LightRAG (D-21). LightRAG режет
+# Разделитель фрагментов внутри документа, который отдаётся LightRAG (D-28). LightRAG режет
 # ровно по нему; во фрагментах встречаться не может — проверяется при вставке.
 FRAGMENT_SEPARATOR = "\n\n␞␞FRAGMENT␞␞\n\n"
 _PROCESSED = "processed"
@@ -34,7 +34,7 @@ class UnknownLevelError(KeyError):
 
 
 class WorkspaceOverrideError(RuntimeError):
-    """Задано переопределение workspace, которое свело бы все уровни в один (D-23)."""
+    """Задано переопределение workspace, которое свело бы все уровни в один (D-30)."""
 
 
 class DocStatusLike(Protocol):

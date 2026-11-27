@@ -3,7 +3,6 @@ from pydantic import ValidationError
 from regagent_common.contracts import (
     AnswerMeta,
     Area,
-    AreasResponse,
     ClauseRequest,
     ClauseResponse,
     Fragment,
@@ -130,19 +129,5 @@ def test_answer_meta_rejects_unknown_outcome() -> None:
         )
 
 
-def test_areas_response() -> None:
-    resp = AreasResponse.model_validate(
-        {
-            "areas": [
-                {
-                    "code": "ДИБ",
-                    "title": "Дирекция ИБ",
-                    "synonyms": ["Дирекция информационной безопасности"],
-                }
-            ]
-        }
-    )
-    assert resp.areas[0] == Area(
-        code="ДИБ", title="Дирекция ИБ", synonyms=["Дирекция информационной безопасности"]
-    )
+def test_area_defaults() -> None:
     assert Area(code="общий", title="Общий").synonyms == []

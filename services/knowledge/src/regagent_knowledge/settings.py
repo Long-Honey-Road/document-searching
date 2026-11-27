@@ -28,7 +28,7 @@ class KnowledgeSettings(CommonSettings):
 
 
 def configure_postgres_env(settings: KnowledgeSettings) -> None:
-    """LightRAG читает подключение к Postgres из ``POSTGRES_*`` процесса (D-25)."""
+    """LightRAG читает подключение к Postgres из ``POSTGRES_*`` процесса (D-32)."""
     os.environ["POSTGRES_HOST"] = settings.postgres_host
     os.environ["POSTGRES_PORT"] = str(settings.postgres_port)
     os.environ["POSTGRES_USER"] = settings.knowledge_db_user
