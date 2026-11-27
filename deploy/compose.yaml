@@ -97,6 +97,8 @@ services:
       OKF_DIR: ${OKF_DIR}
       WATCH_DEBOUNCE_S: ${WATCH_DEBOUNCE_S}
       INDEX_MAX_RETRIES: ${INDEX_MAX_RETRIES}
+      # Тайм-аут одной попытки индексации, с (D-44)
+      INDEX_JOB_TIMEOUT_S: ${INDEX_JOB_TIMEOUT_S:-1800}
       CHUNK_MAX_TOKENS: ${CHUNK_MAX_TOKENS}
       SEARCH_TOP_K: ${SEARCH_TOP_K}
       RERANK_MODE: ${RERANK_MODE:-embeddings}
@@ -106,6 +108,9 @@ services:
       # Рабочий каталог LightRAG — на томе (D-33); повторы извлечения сущностей
       LIGHTRAG_WORKING_DIR: ${LIGHTRAG_WORKING_DIR:-/data/lightrag}
       LIGHTRAG_EXTRACT_GLEANING: ${LIGHTRAG_EXTRACT_GLEANING:-1}
+      # Язык извлечения сущностей (D-45); JSON-извлечение — только если модель умеет json_object (D-46)
+      LIGHTRAG_LANGUAGE: ${LIGHTRAG_LANGUAGE:-Russian}
+      LIGHTRAG_EXTRACTION_JSON: ${LIGHTRAG_EXTRACTION_JSON:-false}
     # Ollama и модель на хосте: на Linux host.docker.internal сам не резолвится
     extra_hosts:
       - "host.docker.internal:host-gateway"

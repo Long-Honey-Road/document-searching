@@ -75,3 +75,21 @@ def test_knowledge_image_bakes_tiktoken_cache() -> None:
     dockerfile = (COMPOSE.parents[1] / "services" / "knowledge" / "Dockerfile").read_text()
     assert "lightrag-download-cache" in dockerfile
     assert "TIKTOKEN_CACHE_DIR" in dockerfile.split("AS runtime", 1)[1]
+
+
+def test_knowledge_receives_every_setting() -> None:
+    """Compose передаёт knowledge переменные явным списком: поле настроек без строки в
+    compose молча работает на значении по умолчанию, и на стенде его не поменять.
+    Повод — 27.11: INDEX_JOB_TIMEOUT_S, LIGHTRAG_LANGUAGE, LIGHTRAG_EXTRACTION_JSON."""
+    from regagent_knowledge.settings import RuntimeSettings
+
+    env = yaml.safe_load(COMPOSE.read_text())["services"]["knowledge"]["environment"]
+    missing = sorted({name.upper() for name in RuntimeSettings.model_fields} - env.keys())
+    assert not missing, f"нет в environment knowledge: {missing}"
+
+
+def test_new_knowledge_settings_have_compose_defaults() -> None:
+    env = yaml.safe_load(COMPOSE.read_text())["services"]["knowledge"]["environment"]
+    assert env["INDEX_JOB_TIMEOUT_S"] == "${INDEX_JOB_TIMEOUT_S:-1800}"
+    assert env["LIGHTRAG_LANGUAGE"] == "${LIGHTRAG_LANGUAGE:-Russian}"
+    assert env["LIGHTRAG_EXTRACTION_JSON"] == "${LIGHTRAG_EXTRACTION_JSON:-false}"
