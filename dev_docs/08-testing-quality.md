@@ -15,6 +15,9 @@
 | integration | knowledge с Postgres (pgvector + AGE) и RabbitMQ в контейнерах; backend с Postgres; поддельный LLM и эмбеддинги | `uv run pytest -m integration` (docker) |
 | e2e | весь стенд в compose, сценарии демо из `01-concept.md` через LangGraph SDK | `uv run pytest -m e2e`, перед демо и по запросу |
 | leak | тесты из `07-security.md` | в integration и e2e, всегда в CI |
+| deploy | правила релиза: проверки конфига и сборки web, туннель, вход в probe, генерация секретов, совместимость `deploy.py` с Python 3.9 | `uv run pytest deploy/tests` (входит в `uv run pytest`) |
+
+CI (`.github/workflows/ci.yml`): `python` — линтер, типы и тесты без внешних сервисов; `integration` — integration и leak на образе `deploy/postgres` (pgvector + AGE) и RabbitMQ (D-41); `web`. e2e в CI не бежит; на стенде роль дымового теста выполняет проверка релиза со входом под `employee_public` (D-49).
 | web | компоненты и вызовы API (Vitest), один сквозной сценарий (Playwright) | `npm test` в `web/` |
 
 **Поддельный LLM.** Для unit и integration — детерминированная подмена OpenAI-совместимого API (фикстура), чтобы тесты не зависели от внешнего сервера и не стоили денег. Тесты с настоящей моделью помечаются `@pytest.mark.llm` и в CI по умолчанию не бегут.
