@@ -128,7 +128,10 @@ def current_identity(config: Mapping[str, Any] | None = None) -> UserIdentity:
 
         config = get_config()
     configurable = config.get("configurable") or {}
-    user = configurable.get("langgraph_auth_user")
+    return identity_from_auth_user(configurable.get("langgraph_auth_user"))
+
+
+def identity_from_auth_user(user: Any) -> UserIdentity:
     if user is None:
         raise AuthError("no authenticated user in run config")
 

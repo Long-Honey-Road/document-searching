@@ -13,11 +13,13 @@ from regagent_common.contracts import AdminDocuments, AdminJobs, AdminReview, Re
 from regagent_backend import knowledge_client
 from regagent_backend.knowledge_client import KnowledgeClient, KnowledgeUnavailable
 from regagent_backend.memory import MemoryService
+from regagent_backend.qc_routes import router as qc_router
+from regagent_backend.qc_store import ADMIN_ROLE
+from regagent_backend.qc_worker import qc_lifespan
 from regagent_backend.settings import BackendSettings
 
-ADMIN_ROLE = "admin"
-
-app = FastAPI()
+app = FastAPI(lifespan=qc_lifespan)
+app.include_router(qc_router)
 
 
 async def _authenticated_sub(request: Request) -> str:

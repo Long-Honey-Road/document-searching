@@ -1,6 +1,17 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { Button } from '@/components/ui/button'
+import { qcRequest, type Capabilities } from './features/qc/api'
+import { AdminTickets, Mine } from './features/qc/TicketViews'
+import { AnalyticsView } from './features/qc/AnalyticsView'
+
+type Page = 'chat' | 'mine' | 'admin' | 'analytics'
+const navigation: { id: Page; label: string; admin?: boolean }[] = [
+  { id: 'chat', label: 'Чат' },
+  { id: 'mine', label: 'Мои заявки' },
+  { id: 'admin', label: 'Очередь ОКК', admin: true },
+  { id: 'analytics', label: 'Аналитика', admin: true },
+]
 const Chat = lazy(async () => ({ default: (await import('./features/chat/Chat')).Chat }))
 
 export default function App() {
@@ -43,16 +54,49 @@ export default function App() {
       </header>
       {actionError && <p className="text-sm text-destructive" role="alert">{actionError}</p>}
       {auth.user?.access_token && (
-        <Suspense fallback={<p role="status">Загружаю чат…</p>}>
-          <Chat
-            token={auth.user.access_token}
-            onUnauthorized={() => {
-              setActionError(undefined)
-              void auth.signinRedirect().catch(() => setActionError('Не удалось начать вход.'))
-            }}
-          />
-        </Suspense>
+        <Workspace key={auth.user.profile?.sub} token={auth.user.access_token} onUnauthorized={() => {
+          setActionError(undefined)
+          void auth.signinRedirect().catch(() => setActionError('Не удалось начать вход.'))
+        }} />
       )}
     </main>
+  )
+}
+
+
+function Workspace({ token, onUnauthorized }: { token: string; onUnauthorized: () => void }) {
+  const [page, setPage] = useState<Page>('chat')
+  const [access, setAccess] = useState<{ token: string; permissions: Capabilities }>()
+  const permissions = access?.token === token ? access.permissions : undefined
+  useEffect(() => {
+    const controller = new AbortController()
+    void qcRequest<Capabilities>(token, '/me', { signal: controller.signal }).then((result) => {
+      if (!controller.signal.aborted) setAccess({ token, permissions: result })
+    }).catch(() => {
+      if (!controller.signal.aborted) setAccess(undefined)
+    })
+    return () => controller.abort()
+  }, [token])
+
+  const activePage = (page === 'admin' || page === 'analytics') && !permissions?.can_review ? 'chat' : page
+  return (
+    <div className="space-y-6">
+      <nav aria-label="Разделы" className="flex flex-wrap gap-2">
+        {navigation.filter((item) => !item.admin || permissions?.can_review).map((item) => (
+          <Button key={item.id} variant={activePage === item.id ? 'secondary' : 'ghost'}
+            aria-current={activePage === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}>
+            {item.label}
+          </Button>
+        ))}
+      </nav>
+      <div hidden={activePage !== 'chat'}>
+        <Suspense fallback={<p role="status">Загружаю чат…</p>}>
+          <Chat token={token} onUnauthorized={onUnauthorized} />
+        </Suspense>
+      </div>
+      {activePage === 'mine' && <Mine token={token} />}
+      {activePage === 'admin' && <AdminTickets token={token} />}
+      {activePage === 'analytics' && <AnalyticsView token={token} areas={permissions?.areas ?? []} />}
+    </div>
   )
 }

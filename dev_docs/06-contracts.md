@@ -1,6 +1,6 @@
 # 06. Контракты
 
-Контракты — общая точка для параллельной работы. Pydantic-модели всех схем ниже живут в пакете `regagent-common` (`packages/common`), сервисы импортируют их оттуда. Любое изменение контракта — вместе с тестом.
+Контракты — общая точка для параллельной работы. Межсервисные Pydantic-модели живут в пакете `regagent-common` (`packages/common`). HTTP-модели ОКК принадлежат backend. Любое изменение контракта — вместе с тестом.
 
 ## knowledge API
 
@@ -54,11 +54,11 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 | Ключ / очередь | Кто пишет | Кто читает | Тело |
 | --- | --- | --- | --- |
 | `index.jobs` | knowledge.watcher, knowledge.reindex | knowledge.consumer | `{job_id, op: "upsert"\|"delete", doc_id, version, path, sha256}`. У `delete` `path` и `sha256` необязательны (D-26). `force` (по умолчанию `false`) — поле `IndexJob` в `regagent_common`: переиндексация ставит `true` у `upsert` (D-45), обработчик тогда не пропускает уже проиндексированный документ. |
-| `practice.publish` | backend (ОКК) | knowledge.consumer | `{practice_id, text, binds: [{doc_id, clause}], mode, areas, verified: {by, at}, source_cluster_id}` |
-| `practice.published` | knowledge | backend | `{practice_id, source_cluster_id, status: "indexed"|"failed", error}` |
-| `qc.events` | knowledge | backend | `{kind: "recheck", reason: "new_version"|"deleted", doc_id, practice_ids: [...]}` |
+| `practice.publish` | backend (ОКК) | Knowledge (поток A) | `{ticket_id, practice_id, revision, text, mode, binds: [{doc_id, version, clause}], admin_id, admin_levels}` |
+| `practice.published` | Knowledge (поток A) | backend | `{ticket_id, practice_id, revision, status, error_code}`. Статус `published` или `failed`. При ошибке требуется машинный код причины. |
+| `qc.events` | Knowledge (поток A) | backend | `{kind: "recheck", reason, doc_id, version, practice_ids}`. Причина `new_version`, `access_changed` или `deleted`. При удалении `version` может быть `null`. Если одновременно изменилась редакция и доступ, Knowledge передаёт `access_changed`. В кабинете для изменения доступа и удаления показывается код ранее привязанного документа. |
 
-Очередь ошибок `regagent.dlq`; до 3 повторов с паузой; обработчики идемпотентны.
+Для очереди индексации используется `regagent.dlq`. Для ОКК backend объявляет устойчивые очереди `practice.publish` и `qc.events`, ко второй привязаны ключи `practice.published` и `qc.events`. У очереди событий один активный потребитель и очередь ошибок `qc.events.dlq`. Сообщение несёт UUID `message_id`, UTC `created_at` и `type`, равный ключу маршрутизации. `ticket_id`, `practice_id` и элементы `practice_ids` — UUID. `revision` и редакция документа — целые числа от 1. Режим `clarifies` или `overrides`. Backend повторяет отправку того же сообщения до подтверждения брокера. Knowledge публикует результат до событий перепроверки той же новой практики и обеспечивает идемпотентность по `(practice_id, revision)`, подтверждает публикацию после индексации и проверяет все привязки и права. Повторы результатов и событий перепроверки безопасны на стороне backend. Схемой общего протокола и потребителем команды владеет поток A. До его подключения поток B проверяется на имитаторе.
 
 ## Ответ агента
 
@@ -84,16 +84,20 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | --- | --- | --- | --- |
 | GET | `/me/memory` | любой | `{"records": [...]}`: свои записи с полем `key` |
 | DELETE | `/me/memory/{key}` | любой | удалить свою запись, `204` также при её отсутствии |
-| GET | `/me/notifications` | любой | уведомления |
-| POST | `/feedback` | любой | `{thread_id, message_id, kind: "contradiction"|"missing", comment}` → элемент ОКК |
-| GET | `/qc/clusters` | qc | очередь |
-| GET | `/qc/clusters/{id}` | qc | кластер с вопросами и черновиком |
-| POST | `/qc/clusters/{id}/draft` | qc | сгенерировать черновик ответа |
-| POST | `/qc/clusters/{id}/publish` | qc | `{text, binds, mode, areas}` |
-| POST | `/qc/clusters/{id}/reject` | qc | закрыть без практики |
+| GET | `/qc/me` | вошедший | `{can_review, areas}` |
+| POST | `/qc/tickets` | вошедший | `{submission_id, question, comment?}` → своя заявка; повтор ключа возвращает ту же заявку |
+| GET | `/qc/tickets` | вошедший | свои заявки, статус и время |
+| GET | `/qc/admin/tickets` | admin | очередь с фильтром `status`, `limit`, `offset` |
+| GET | `/qc/admin/tickets/{id}` | admin | детали заявки и история |
+| POST | `/qc/admin/tickets/{id}/publish` | admin | `{text, mode, binds}` → статус `publishing` |
+| POST | `/qc/admin/tickets/{id}/reject` | admin | переход в `rejected` |
+| GET | `/qc/admin/analytics` | admin | `days`, `area`, `outcome`, `ticket_status`, `limit`, `offset` → сводка и группы |
+| POST | `/qc/admin/analytics/{run_id}/ticket` | admin | создать заявку из неотвеченной группы |
 | * | `/admin/*` | admin | прокси служебного API knowledge |
 
-Ошибки — RFC 9457 (`application/problem+json`).
+За пределами доступных уровней заявки и ходы отвечают 404. Недопустимый переход отвечает 409. Валидация выполняется на сервере. `submission_id` в чате совпадает с ID пользовательского сообщения и связующим полем `message_id` аналитики.
+
+Для потока C backend предоставляет внутреннюю функцию `regagent_backend.qc_analytics.record_turn(turn, identity)`. `TurnOutcome` принимает UUID `run_id`, UTC `occurred_at`, `question`, `message_id` (ID сообщения, если есть), `area` (код или null), `fragment_ids`, `used_practice`, `outcome` и `reason` (необязательный машинный код). Исходы: `answer`, `empty_search`, `insufficient_evidence`, `clarification`, `access_limited`, `search_unavailable`, `model_timeout`, `refusal`. `access_limited` передаётся только по подтверждённому сигналу от поиска. На пустой выдаче используется `empty_search`. Функция берёт доступы из серверной `UserIdentity`, при сбое возвращает `false` и пишет техническое событие без текста.
 
 ## Переменные `.env`
 
@@ -136,14 +140,12 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `LIGHTRAG_EXTRACT_GLEANING` | повторные проходы извлечения сущностей (каждый удваивает вызовы LLM) | `1` |
 | `LIGHTRAG_LANGUAGE` | язык извлечения сущностей и связей | `Russian` |
 | `LIGHTRAG_EXTRACTION_JSON` | извлечение в JSON, требует поддержки `json_object` на сервере модели | `false` |
-| `AGENT_ESCALATE_AFTER` | после скольких неудач предлагать ОКК | `2` |
 | `AGENT_MAX_STEPS` | предел шагов Deep Agent | `12` |
 | `AGENT_MAX_SEARCHES`, `TOOL_RESULT_MAX_CHARS` | поисков на один ответ; текста фрагментов модели за один поиск, символов (D-24) | `3`, `12000` |
 | `MEMORY_AREA_TTL_DAYS`, `MEMORY_MAX_ACTIVE_AREAS` | память | `14`, `3` |
 | `QUESTION_MAX_CHARS`, `RATE_LIMIT_PER_USER_PER_MIN` | лимиты | `2000`, `20` |
-| `QC_CLUSTER_SIMILARITY`, `QC_NOTIFY_TO` | ОКК | `0.85`, `qc@example.org` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | почта | |
-| `AUDIT_RETENTION_DAYS` | срок хранения журнала | `90` |
+| `AUDIT_RETENTION_DAYS` | срок хранения аналитики ОКК, в днях | `90` |
 | `VITE_ASSISTANT_ID` | ID графа или ассистента в Aegra. Пустое значение подходит для стенда с одним ассистентом | |
 | `VITE_API_URL`, `VITE_OIDC_AUTHORITY`, `VITE_OIDC_CLIENT_ID` | web (на этапе сборки) | |
 

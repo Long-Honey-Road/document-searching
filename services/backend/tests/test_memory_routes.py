@@ -126,3 +126,17 @@ async def test_memory_routes_do_not_enable_direct_client_store_access(
         headers=_bearer(make_token(sub="alice")),
     )
     assert response.status_code == 403
+
+
+async def test_qc_access_comes_from_the_aegra_identity(
+    client: httpx.AsyncClient, make_token: MakeToken
+) -> None:
+    guest = await client.get("/qc/me")
+    assert guest.status_code == 401
+    employee = await client.get("/qc/me?role=admin", headers=_bearer(make_token(sub="alice")))
+    assert employee.status_code == 200 and employee.json()["can_review"] is False
+    reviewer = await client.get(
+        "/qc/me", headers=_bearer(make_token(sub="admin", realm_access={"roles": ["admin"]}))
+    )
+    assert reviewer.status_code == 200 and reviewer.json()["can_review"] is True
+    assert reviewer.json()["areas"] == ["ДИБ", "ДБРЦТ", "общий"]

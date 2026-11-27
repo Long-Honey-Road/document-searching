@@ -2,6 +2,7 @@ import { Client, type Message, type Thread } from '@langchain/langgraph-sdk'
 import { useStream } from '@langchain/langgraph-sdk/react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { EscalateQuestion } from '@/features/qc/EscalateQuestion'
 import { Answer, type AnswerMeta } from './Answer'
 import { classifyError, problemText, type ChatProblem } from './errors'
 
@@ -34,9 +35,10 @@ function ProblemAlert({ problem, onUnauthorized }: {
 }
 
 function Conversation({
-  client, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized,
+  client, token, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized,
 }: {
   client: Client
+  token: string
   assistantId: string
   threadId: string | null
   setThreadId: (id: string) => void
@@ -68,7 +70,7 @@ function Conversation({
     setSendError(null)
     setQuestion('')
     try {
-      await stream.submit({ messages: [{ type: 'human', content }] })
+      await stream.submit({ messages: [{ id: crypto.randomUUID(), type: 'human', content }] })
     } catch (error) {
       setQuestion(content)
       setSendError(classifyError(error))
@@ -82,9 +84,14 @@ function Conversation({
       )}
       <div className="space-y-4" aria-live="polite">
         {messages.map((message, index) => message.type === 'human' ? (
-          <p key={message.id ?? index} className="ml-auto max-w-prose whitespace-pre-wrap rounded-xl bg-primary px-4 py-3 text-primary-foreground">
-            {getText(message)}
-          </p>
+          <div key={message.id ?? index} className="ml-auto max-w-prose space-y-1 text-right">
+            <p className="whitespace-pre-wrap rounded-xl bg-primary px-4 py-3 text-left text-primary-foreground">
+              {getText(message)}
+            </p>
+            {message.id && getText(message).trim() && (
+              <EscalateQuestion token={token} question={getText(message)} submissionId={message.id} />
+            )}
+          </div>
         ) : (
           <Answer key={message.id ?? index} text={getText(message)} meta={getAnswerMeta(message)} />
         ))}
@@ -161,7 +168,7 @@ export function Chat({ token, onUnauthorized }: { token: string; onUnauthorized:
       <div className="min-w-0 space-y-3">
         {problem && <ProblemAlert problem={problem} onUnauthorized={onUnauthorized} />}
         {assistantId ? (
-          <Conversation {...{ client, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized }} />
+          <Conversation {...{ client, token, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized }} />
         ) : !problem && (
           <p role="status" className="text-sm text-muted-foreground">Подключаюсь к агенту…</p>
         )}
