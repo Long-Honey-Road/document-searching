@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import base64
 import fcntl
+import hashlib
 import http.client
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import time
 from collections.abc import Callable
+from html.parser import HTMLParser
+from http.cookies import SimpleCookie
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 log = logging.getLogger("deploy")
 
@@ -159,6 +164,154 @@ def tunnel_override(cloudflare_env: Path) -> dict[str, object] | None:
             }
         }
     }
+
+
+# --- Вход под демо-учёткой после релиза (stdlib: deploy.py работает на системном python3) ---
+
+Send = Callable[
+    [str, str, "dict[str, str]", "bytes | None"], "tuple[int, list[tuple[str, str]], bytes]"
+]
+PROBE_USER = "employee_public"
+PROBE_PASSWORD_VAR = "KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD"  # noqa: S105 — имя переменной
+
+
+class LoginRejected(RuntimeError):
+    """Keycloak не принял пароль. Не повторяем: защита от подбора заблокирует учётку."""
+
+
+class LoopbackHttp:
+    """HTTP к прокси стенда через loopback. Публичные адреса стенда (их отдаёт Keycloak)
+    переписываются на 127.0.0.1 с заголовком Host, наружу запросы не уходят."""
+
+    def __init__(self, port: int, base: str, send: Send | None = None) -> None:
+        self.port = port
+        self.host = urlsplit(base).netloc
+        self.cookies: dict[str, str] = {}
+        self._send = send or self._loopback
+
+    def _loopback(
+        self, method: str, target: str, headers: dict[str, str], body: bytes | None
+    ) -> tuple[int, list[tuple[str, str]], bytes]:
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            connection.request(method, target, body=body, headers=headers)
+            response = connection.getresponse()
+            return response.status, response.getheaders(), response.read()
+        finally:
+            connection.close()
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        form: dict[str, str] | None = None,
+        payload: object = None,
+        token: str | None = None,
+    ) -> tuple[int, dict[str, str], bytes]:
+        parts = urlsplit(url)
+        if parts.netloc and parts.netloc != self.host:
+            raise RuntimeError("вход: Keycloak отправил на другой хост")
+        target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        headers = {"Host": self.host}
+        body = None
+        if form is not None:
+            body = urlencode(form).encode()
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        elif payload is not None:
+            body = json.dumps(payload).encode()
+            headers["Content-Type"] = "application/json"
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        if self.cookies:
+            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
+        status, raw_headers, data = self._send(method, target, headers, body)
+        for name, value in raw_headers:
+            if name.lower() == "set-cookie":
+                for morsel in SimpleCookie(value).values():
+                    self.cookies[morsel.key] = morsel.value
+        return status, {name.lower(): value for name, value in raw_headers}, data
+
+
+class _LoginForm(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.action = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "form" and values.get("id") == "kc-form-login":
+            self.action = values.get("action") or ""
+
+
+def _sign_in(
+    http: LoopbackHttp, issuer: str, client_id: str, base: str, user: str, password: str
+) -> str:
+    status, _, data = http.request("GET", issuer + "/.well-known/openid-configuration")
+    if status != 200:
+        raise RuntimeError(f"вход: OIDC discovery → {status}")
+    oidc = json.loads(data)
+    verifier = secrets.token_urlsafe(40)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+    state = secrets.token_urlsafe(16)
+    redirect = base + "/"
+    query = urlencode(
+        {
+            "client_id": client_id,
+            "redirect_uri": redirect,
+            "response_type": "code",
+            "scope": "openid profile",
+            "code_challenge_method": "S256",
+            "code_challenge": challenge.decode().rstrip("="),
+            "state": state,
+        }
+    )
+    status, _, page = http.request("GET", oidc["authorization_endpoint"] + "?" + query)
+    form = _LoginForm()
+    form.feed(page.decode("utf-8", "replace"))
+    if status != 200 or not form.action:
+        raise RuntimeError(f"вход: нет формы Keycloak ({status})")
+    action = urljoin(oidc["authorization_endpoint"], form.action)
+    status, headers, _ = http.request("POST", action, form={"username": user, "password": password})
+    location = headers.get("location", "")
+    if status != 302 or not location.startswith(redirect):
+        raise LoginRejected(
+            f"вход под {user} не прошёл ({status}): пароль в .env не совпадает с Keycloak?"
+        )
+    params = parse_qs(urlsplit(location).query)
+    if params.get("state") != [state] or not params.get("code"):
+        raise RuntimeError("вход: Keycloak вернул неверный state или без code")
+    status, _, data = http.request(
+        "POST",
+        oidc["token_endpoint"],
+        form={
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "redirect_uri": redirect,
+            "code": params["code"][0],
+            "code_verifier": verifier,
+        },
+    )
+    if status != 200:
+        raise RuntimeError(f"вход: обмен кода на токен → {status}")
+    token: str = json.loads(data)["access_token"]
+    return token
+
+
+def check_signed_in(
+    http: LoopbackHttp, issuer: str, client_id: str, base: str, user: str, password: str
+) -> None:
+    """То, что делает браузер после входа: список диалогов и ровно один ассистент."""
+    token = _sign_in(http, issuer, client_id, base, user, password)
+    status, _, _ = http.request("POST", "/api/threads/search", payload={"limit": 1}, token=token)
+    if status != 200:
+        raise RuntimeError(f"после входа /api/threads/search → {status}")
+    status, _, data = http.request("POST", "/api/assistants/search", payload={}, token=token)
+    if status != 200:
+        raise RuntimeError(f"после входа /api/assistants/search → {status}")
+    found = len(json.loads(data))
+    if found != 1:
+        raise RuntimeError(f"после входа ассистентов {found}, нужен ровно один")
 
 
 def recover(path: Path, start: Callable[[str], bool], stop: Callable[[], None]) -> None:
@@ -406,6 +559,15 @@ class Deployment:
                         raise RuntimeError("неверный OIDC issuer")
             finally:
                 connection.close()
+        env = parse_env((self.root / "configs" / f"{release}.env").read_text())
+        check_signed_in(
+            LoopbackHttp(port, base),
+            f"{base}/auth/realms/regagent",
+            env.get("VITE_OIDC_CLIENT_ID") or "regagent-web",
+            base,
+            PROBE_USER,
+            env.get(PROBE_PASSWORD_VAR, ""),
+        )
         indexed = self.compose(
             release,
             "exec",
@@ -461,6 +623,9 @@ class Deployment:
                 self.probe(release)
                 self.start_tunnel(release)
                 return True
+            except LoginRejected as exc:
+                log.error("Проверка %s: %s. Повторять не буду.", release, exc)
+                break
             except (OSError, RuntimeError, ValueError, http.client.HTTPException) as exc:
                 log.info("Проверка %s (%d/61): %s", release, attempt + 1, exc)
                 if attempt < 60:

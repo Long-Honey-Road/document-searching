@@ -1,5 +1,9 @@
+import base64
+import hashlib
+import json
 from pathlib import Path
 from runpy import run_path
+from urllib.parse import parse_qs, urlsplit
 
 deploy = run_path(str(Path(__file__).parents[1] / "prod/deploy.py"))
 
@@ -30,8 +34,6 @@ def test_recovers_interrupted_candidate_before_next_release(tmp_path):
 
 
 def test_failed_rollback_preserves_pending_for_restart(tmp_path):
-    import pytest
-
     state = tmp_path / "state.json"
     deploy["write_state"](state, {"good": "A", "pending": "B"})
     with pytest.raises(RuntimeError, match="откат"):
@@ -202,3 +204,145 @@ def test_probe_expects_keycloak_admin_hidden() -> None:
     assert paths["/auth/admin/"] == {404}
     assert paths["/auth/realms/master/.well-known/openid-configuration"] == {404}
     assert paths["/auth/realms/regagent/.well-known/openid-configuration"] == {200}
+
+
+# --- вход под демо-учёткой после релиза ---------------------------------------------
+
+BASE = "https://regagent.example.test"
+ISSUER = BASE + "/auth/realms/regagent"
+LOGIN_PAGE = (
+    '<html><form id="kc-form-login" method="post" '
+    f'action="{ISSUER}/login-actions/authenticate?session_code=s&amp;tab_id=t">'
+    '<input name="username"><input name="password" type="password"></form></html>'
+)
+
+
+class FakeStand:
+    """Keycloak и API за прокси: ровно то, что видит probe через loopback."""
+
+    def __init__(self, *, password: str = "секрет", assistants: int = 1, threads: int = 200):  # noqa: S107
+        self.password = password
+        self.assistants = assistants
+        self.threads = threads
+        self.requests: list[tuple[str, str, dict[str, str]]] = []
+        self.state = ""
+        self.challenge = ""
+
+    def send(self, method: str, target: str, headers: dict[str, str], body: bytes | None):
+        self.requests.append((method, target, dict(headers)))
+        path, query = urlsplit(target).path, parse_qs(urlsplit(target).query)
+        form = parse_qs((body or b"").decode())
+        json_ok = [("Content-Type", "application/json")]
+        if path == "/auth/realms/regagent/.well-known/openid-configuration":
+            oidc = {
+                "issuer": ISSUER,
+                "authorization_endpoint": ISSUER + "/protocol/openid-connect/auth",
+                "token_endpoint": ISSUER + "/protocol/openid-connect/token",
+            }
+            return 200, json_ok, json.dumps(oidc).encode()
+        if path.endswith("/openid-connect/auth"):
+            assert query["client_id"] == ["regagent-web"]
+            assert query["redirect_uri"] == [BASE + "/"]
+            assert query["code_challenge_method"] == ["S256"]
+            self.state, self.challenge = query["state"][0], query["code_challenge"][0]
+            cookie = [("Set-Cookie", "AUTH_SESSION_ID=abc; Path=/auth/realms/regagent/; Secure")]
+            return 200, cookie, LOGIN_PAGE.encode()
+        if path.endswith("/login-actions/authenticate"):
+            assert "AUTH_SESSION_ID=abc" in headers.get("Cookie", "")
+            assert query == {"session_code": ["s"], "tab_id": ["t"]}
+            if form.get("password") != [self.password]:
+                return 200, [], b"<span id='input-error'>Invalid username or password.</span>"
+            location = f"{BASE}/?state={self.state}&session_state=x&code=the-code"
+            return 302, [("Location", location)], b""
+        if path.endswith("/openid-connect/token"):
+            verifier = form["code_verifier"][0]
+            digest = hashlib.sha256(verifier.encode()).digest()
+            assert base64.urlsafe_b64encode(digest).decode().rstrip("=") == self.challenge
+            assert form["code"] == ["the-code"] and form["grant_type"] == ["authorization_code"]
+            return 200, json_ok, json.dumps({"access_token": "user-token"}).encode()
+        if path in {"/api/threads/search", "/api/assistants/search"}:
+            if headers.get("Authorization") != "Bearer user-token":
+                return 401, [], b""
+            if path == "/api/threads/search":
+                return self.threads, json_ok, b"[]"
+            return (
+                200,
+                json_ok,
+                json.dumps([{"assistant_id": str(i)} for i in range(self.assistants)]).encode(),
+            )
+        return 404, [], b""
+
+
+def _login(stand: FakeStand) -> None:
+    http = deploy["LoopbackHttp"](18082, BASE, send=stand.send)
+    deploy["check_signed_in"](http, ISSUER, "regagent-web", BASE, "employee_public", "секрет")
+
+
+def test_signed_in_probe_walks_keycloak_and_api_through_loopback(caplog) -> None:
+    stand = FakeStand()
+    with caplog.at_level("DEBUG"):
+        _login(stand)
+    paths = [target.split("?")[0] for _, target, _ in stand.requests]
+    assert paths[-2:] == ["/api/threads/search", "/api/assistants/search"]
+    # Всё идёт на прокси стенда: путь без схемы и хоста, Host — публичный
+    assert all(not target.startswith("http") for _, target, _ in stand.requests)
+    assert {headers["Host"] for _, _, headers in stand.requests} == {"regagent.example.test"}
+    assert "секрет" not in caplog.text
+
+
+def test_signed_in_probe_rejects_wrong_password_without_echoing_it() -> None:
+    with pytest.raises(deploy["LoginRejected"]) as error:
+        _login(FakeStand(password="другой"))  # noqa: S106
+    assert "employee_public" in str(error.value)
+    assert "секрет" not in str(error.value)
+
+
+def test_signed_in_probe_rejects_401_from_api() -> None:
+    with pytest.raises(RuntimeError, match="threads/search → 401"):
+        _login(FakeStand(threads=401))
+
+
+def test_signed_in_probe_requires_exactly_one_assistant() -> None:
+    with pytest.raises(RuntimeError, match="ассистент"):
+        _login(FakeStand(assistants=2))
+
+
+def test_loopback_http_never_leaves_the_stand_host() -> None:
+    http = deploy["LoopbackHttp"](18082, BASE, send=FakeStand().send)
+    with pytest.raises(RuntimeError, match="другой хост"):
+        http.request("GET", "https://evil.example/steal")
+
+
+def test_deploy_script_stays_python39_compatible() -> None:
+    """LaunchAgent запускает deploy.py системным /usr/bin/python3 macOS (3.9)."""
+    import ast
+
+    source = (Path(__file__).parents[1] / "prod/deploy.py").read_text()
+    ast.parse(source, feature_version=(3, 9))
+    assert source.splitlines()[2] == "from __future__ import annotations"
+
+
+def _start_with_probe(tmp_path: Path, monkeypatch, failure: Exception) -> tuple[bool, int]:
+    d = deploy["Deployment"](tmp_path)
+    attempts = []
+
+    def probe(release: str) -> None:
+        attempts.append(release)
+        raise failure
+
+    monkeypatch.setattr(d, "compose", lambda *args, **kwargs: "")
+    monkeypatch.setattr(d, "probe", probe)
+    monkeypatch.setattr(d, "status", lambda release: None)
+    sleeper = type("NoSleep", (), {"sleep": staticmethod(lambda seconds: None)})
+    monkeypatch.setitem(deploy["Deployment"].start.__globals__, "time", sleeper)
+    return d.start("a" * 40), len(attempts)
+
+
+def test_rejected_sign_in_is_not_retried(tmp_path: Path, monkeypatch) -> None:
+    """Повторы с неверным паролем заблокировали бы employee_public защитой от подбора."""
+    rejected = deploy["LoginRejected"]("вход под employee_public не прошёл")
+    assert _start_with_probe(tmp_path, monkeypatch, rejected) == (False, 1)
+
+
+def test_transient_probe_failures_are_retried(tmp_path: Path, monkeypatch) -> None:
+    assert _start_with_probe(tmp_path, monkeypatch, OSError("connection refused")) == (False, 61)
