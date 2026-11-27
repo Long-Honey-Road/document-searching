@@ -80,7 +80,7 @@ web заменяет `[f:...]` на номера `[1]` по `sources`.
 
 ## Итог хода для аналитики ОКК (стык B + C)
 
-`regagent_common.contracts.TurnReport` — один на ход с `run_id`. Граф передаёт его в `TurnSink.record` после того, как ответ готов (D-54); хранилище и запросы — поток B. Предложение потока C: поток B подтверждает или правит поля при реализации B3.
+`regagent_common.contracts.TurnReport` — один на ход с `run_id`. Граф передаёт его вместе с `UserIdentity` в `TurnSink.record(report, identity)` после того, как ответ готов (D-54). Рабочий приёмник — `QcTurnSink`: переводит `TurnReport` в `qc_analytics.TurnOutcome` потока B (вопрос обрезается до 4000 символов, фрагменты — до 500) и вызывает `record_turn`. Соответствие исходов: answered→answer, empty_search, unsupported→insufficient_evidence, ask_area→clarification, refused→refusal, search_unavailable, model_timeout; для `error` в аналитике B нет значения — такой ход виден только в событиях.
 
 | Поле | Что |
 | --- | --- |
