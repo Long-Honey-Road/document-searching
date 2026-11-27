@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from importlib import resources
 from typing import Any, Literal, get_args
@@ -39,6 +39,8 @@ class DocumentRecord:
 class JobState:
     status: str
     attempts: int
+    current_step: str | None = None
+    steps: dict[str, float] = field(default_factory=dict)
 
 
 def plan_jobs(
@@ -191,9 +193,13 @@ class Registry:
 
     async def job_state(self, job_id: str) -> JobState | None:
         row = await self._pool.fetchrow(
-            "SELECT status, attempts FROM jobs WHERE job_id = $1", job_id
+            "SELECT status, attempts, current_step, steps FROM jobs WHERE job_id = $1", job_id
         )
-        return JobState(row["status"], row["attempts"]) if row else None
+        if row is None:
+            return None
+        return JobState(
+            row["status"], row["attempts"], row["current_step"], json.loads(row["steps"])
+        )
 
     async def save_job(
         self,
@@ -203,15 +209,16 @@ class Registry:
         *,
         error: str | None = None,
         steps: Mapping[str, float] | None = None,
+        current_step: str | None = None,
     ) -> None:
         await self._pool.execute(
             """
             INSERT INTO jobs (job_id, op, doc_id, version, sha256, path, status, attempts,
-                              error, steps, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                              error, steps, created_at, current_step)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (job_id) DO UPDATE SET
                 status = EXCLUDED.status, attempts = EXCLUDED.attempts, error = EXCLUDED.error,
-                steps = EXCLUDED.steps, updated_at = now()
+                steps = EXCLUDED.steps, current_step = EXCLUDED.current_step, updated_at = now()
             """,
             job.job_id,
             job.op,
@@ -224,4 +231,19 @@ class Registry:
             error,
             json.dumps(steps or {}),
             job.created_at,
+            current_step,
+        )
+
+    async def update_job_progress(
+        self, job_id: str, attempt: int, current_step: str | None, steps: Mapping[str, float]
+    ) -> None:
+        await self._pool.execute(
+            """
+            UPDATE jobs SET current_step = $3, steps = $4, updated_at = now()
+            WHERE job_id = $1 AND attempts = $2 AND status = 'indexing'
+            """,
+            job_id,
+            attempt,
+            current_step,
+            json.dumps(steps),
         )

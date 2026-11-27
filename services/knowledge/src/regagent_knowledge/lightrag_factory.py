@@ -46,6 +46,8 @@ def build_lightrag(
         chunk_token_size=settings.chunk_max_tokens * 2,
         chunk_overlap_token_size=0,
         entity_extract_max_gleaning=settings.lightrag_extract_gleaning,
+        addon_params={"language": settings.lightrag_language},
+        entity_extraction_use_json=settings.lightrag_extraction_json,
         vector_db_storage_cls_kwargs={"cosine_better_than_threshold": 0.0},
     )
 

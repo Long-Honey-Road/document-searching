@@ -38,6 +38,7 @@ class Model:
     def __init__(self) -> None:
         self.responses: list[Any] = []
         self.requests: list[dict[str, Any]] = []
+        self.fragments = [PUNKT]
 
     async def request(self, request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -104,7 +105,7 @@ async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
         assert params["levels"] == ["public"]
         lookups.append(params)
         response = SearchResponse(
-            fragments=[PUNKT],
+            fragments=model.fragments,
             areas_found=["ДИБ"] if params["areas"] else ["ДИБ", "ДБРЦТ"],
             areas_diverge=not params["areas"],
             low_confidence=False,
@@ -207,6 +208,91 @@ async def test_bad_citation_retries_once_then_fallback(stand: Any) -> None:
     assert len(model.requests) == 4
     assert len(state["messages"]) == 2
     assert "два дня" not in reply.content
+
+
+@pytest.mark.leak
+@pytest.mark.parametrize("correction_supported", [True, False])
+async def test_comparison_checks_claims_and_retries_at_most_once(
+    stand: Any, correction_supported: bool
+) -> None:
+    model, graph, _ = stand
+    model.fragments.extend(
+        [
+            Fragment(
+                fragment_id="subcontractor-selection@1#1.1",
+                doc_id="subcontractor-selection",
+                version=1,
+                title="Регламент подбора субподрядчика",
+                clause="1.1",
+                area="общий",
+                kind="regulation",
+                text="При нехватке внутренних ресурсов руководитель проекта формирует запрос.",
+                score=0.95,
+            ),
+            Fragment(
+                fragment_id="project-activity-organization@1#2.10",
+                doc_id="project-activity-organization",
+                version=1,
+                title="Организация проектной деятельности",
+                clause="2.10",
+                area="общий",
+                kind="regulation",
+                text="При отсутствии внутренних ресурсов TPS формирует критерии выбора.",
+                score=0.90,
+            ),
+            Fragment(
+                fragment_id="dib-presale-activity@1#6",
+                doc_id="dib-presale-activity",
+                version=1,
+                title="Пресейловая деятельность Дирекции ИБ",
+                clause="6",
+                area="ДИБ",
+                kind="regulation",
+                text="Пресейл-архитектор подбирает партнёра или субподрядчика на пресейле.",
+                score=0.85,
+            ),
+        ]
+    )
+    direct = "В общем порядке РП формирует запрос [f:subcontractor-selection@1#1.1]."
+    good = direct + " В ДИБ пресейл-архитектор выполняет подбор [f:dib-presale-activity@1#6]."
+    wrong = direct + " Отдельный запрос от РП не нужен [f:project-activity-organization@1#2.10]."
+    correction = good if correction_supported else wrong
+    model.responses = [
+        guard("общий", "ДИБ"),
+        {"content": wrong},
+        {"content": json.dumps({"supported": False})},
+        {"content": correction},
+        {"content": json.dumps({"supported": correction_supported})},
+    ]
+    events = [
+        event
+        async for event in graph.astream(
+            {"messages": [("human", "Сравни общий порядок и ДИБ при подборе субподрядчика.")]},
+            config=CONFIG,
+            stream_mode=["values", "messages"],
+            subgraphs=True,
+        )
+    ]
+    public_states = [payload for ns, mode, payload in events if not ns and mode == "values"]
+    messages = public_states[-1]["messages"]
+    reply = messages[-1]
+    assert meta(reply).outcome == ("answer" if correction_supported else "fallback")
+    assert "отдельный запрос" not in repr(events).lower()
+    assert model.fragments[1].text not in repr(events)
+    assert len(messages) == 2
+    assert not model.responses
+    cited = json.loads(model.requests[2]["messages"][-1]["content"])["источники"]
+    assert [item["id"] for item in cited] == [
+        fragment.fragment_id for fragment in model.fragments[1:3]
+    ]
+    assert cited[0]["текст"] == model.fragments[1].text
+    assert model.requests[2].get("tools") is None
+    if correction_supported:
+        assert reply.text == good
+        assert [source.fragment_id for source in meta(reply).sources] == [
+            model.fragments[1].fragment_id,
+            model.fragments[3].fragment_id,
+        ]
 
 
 async def test_off_topic_refusal_does_not_search(stand: Any) -> None:

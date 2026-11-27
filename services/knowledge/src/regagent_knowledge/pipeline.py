@@ -4,21 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from time import monotonic
 from typing import Protocol
 
 from lightrag.utils import Tokenizer
 from regagent_common.access import AccessLevels
 from regagent_common.contracts import IndexJob
 
+from .jobs import IndexRequest, JobProgress
 from .manifest import ManifestEntry
 from .normalize import Clause, build_chunks, split_clauses
 from .okf import OkfStore
 from .parsing import Parser
+from .references import DocumentReferences, find_document_references
 from .registry import DocumentRecord, Registry
 from .settings import KnowledgeSettings
 from .watcher import FolderSource
@@ -41,8 +42,11 @@ class PipelineDeps:
     tokenizer: Tokenizer | None = None
 
 
-def _upsert_snapshot(source: FolderSource, job: IndexJob) -> tuple[ManifestEntry, bytes] | None:
-    entry = source.manifest().entries.get(job.doc_id)
+def _upsert_snapshot(
+    source: FolderSource, job: IndexJob
+) -> tuple[ManifestEntry, bytes, dict[str, ManifestEntry]] | None:
+    entries = source.manifest().entries
+    entry = entries.get(job.doc_id)
     if entry is None or entry.version != job.version or entry.file != job.path:
         return None
     try:
@@ -51,7 +55,7 @@ def _upsert_snapshot(source: FolderSource, job: IndexJob) -> tuple[ManifestEntry
         return None
     if data is None or hashlib.sha256(data).hexdigest() != job.sha256:
         return None
-    return entry, data
+    return entry, data, entries
 
 
 def _parse(parser: Parser, entry: ManifestEntry, data: bytes) -> str:
@@ -59,14 +63,6 @@ def _parse(parser: Parser, entry: ManifestEntry, data: bytes) -> str:
         path = Path(directory) / Path(entry.file).name
         path.write_bytes(data)
         return parser.parse(path)
-
-
-async def _timed[T](name: str, operation: Awaitable[T], steps: dict[str, float]) -> T:
-    start = monotonic()
-    try:
-        return await operation
-    finally:
-        steps[name] = monotonic() - start
 
 
 def _matches(record: DocumentRecord, entry: ManifestEntry, sha256: str) -> bool:
@@ -80,29 +76,29 @@ def _matches(record: DocumentRecord, entry: ManifestEntry, sha256: str) -> bool:
 
 
 async def _upsert(
-    job: IndexJob, deps: PipelineDeps, source: FolderSource, steps: dict[str, float]
+    job: IndexJob, deps: PipelineDeps, source: FolderSource, progress: JobProgress
 ) -> None:
-    snap = await asyncio.to_thread(_upsert_snapshot, source, job)
+    async with progress.step("snapshot"):
+        snap = await asyncio.to_thread(_upsert_snapshot, source, job)
     if snap is None or job.sha256 is None:
         return
-    entry, data = snap
+    entry, data, entries = snap
     previous = await deps.registry.get(job.doc_id)
     if previous is not None:
-        if previous.status == "indexed" and _matches(previous, entry, job.sha256):
+        force = isinstance(job, IndexRequest) and job.force
+        if not force and previous.status == "indexed" and _matches(previous, entry, job.sha256):
             return
         if not await deps.registry.transition_status(previous, "indexing"):
             return
+        progress.record = replace(previous, status="indexing", error=None)
         if (
             previous.version is not None
             and previous.level is not None
             and previous.status != "deleted"
             and (previous.version, previous.level) != (entry.version, entry.access)
         ):
-            await _timed(
-                "delete_previous",
-                deps.rag.delete(previous.level, f"{job.doc_id}@v{previous.version}"),
-                steps,
-            )
+            async with progress.step("delete_previous"):
+                await deps.rag.delete(previous.level, f"{job.doc_id}@v{previous.version}")
 
     await deps.registry.set_status(
         entry.doc_id,
@@ -114,46 +110,57 @@ async def _upsert(
         title=entry.title,
     )
     target = await deps.registry.get(entry.doc_id)
-    markdown = await _timed("parse", asyncio.to_thread(_parse, deps.parser, entry, data), steps)
+    if target is None or target.status != "indexing" or not _matches(target, entry, job.sha256):
+        return
+    progress.record = target
+    async with progress.step("parse"):
+        markdown = await asyncio.to_thread(_parse, deps.parser, entry, data)
 
-    def normalize() -> tuple[list[Clause], list[str]]:
+    def normalize() -> tuple[list[Clause], list[str], DocumentReferences]:
         clauses = split_clauses(markdown)
         chunks = build_chunks(
             entry, clauses, deps.settings.chunk_max_tokens, tokenizer=deps.tokenizer
         )
         if not chunks:
             raise ValueError("в документе нет фрагментов")
-        return clauses, [chunk.text for chunk in chunks]
+        references = find_document_references(entry.doc_id, clauses, entries.values())
+        return clauses, [chunk.text for chunk in chunks], references
 
-    clauses, texts = await _timed("normalize", asyncio.to_thread(normalize), steps)
-    current = await asyncio.to_thread(_upsert_snapshot, source, job)
+    async with progress.step("normalize"):
+        clauses, texts, references = await asyncio.to_thread(normalize)
+    async with progress.step("validate_snapshot"):
+        current = await asyncio.to_thread(_upsert_snapshot, source, job)
     if current is None or current[0] != entry:
         return
-    await _timed(
-        "okf", asyncio.to_thread(deps.okf.write_regulation, entry, clauses, job.sha256), steps
-    )
-    key = f"{entry.doc_id}@v{entry.version}"
-    await _timed("index", deps.rag.insert(entry.access, key, texts), steps)
-
-    current = await asyncio.to_thread(_upsert_snapshot, source, job)
-    if (
-        current is not None
-        and current[0] == entry
-        and target is not None
-        and target.status == "indexing"
-    ):
-        indexed = await _timed(
-            "registry", deps.registry.transition_status(target, "indexed"), steps
+    if current[2] != entries:
+        references = await asyncio.to_thread(
+            find_document_references, entry.doc_id, clauses, current[2].values()
         )
-        if indexed:
+    async with progress.step("okf"):
+        await asyncio.to_thread(
+            deps.okf.write_regulation, entry, clauses, job.sha256, references=references
+        )
+    key = f"{entry.doc_id}@v{entry.version}"
+    async with progress.step("index"):
+        await deps.rag.insert(entry.access, key, texts)
+
+    async with progress.step("registry"):
+        current = await asyncio.to_thread(_upsert_snapshot, source, job)
+        if (
+            current is not None
+            and current[0] == entry
+            and await deps.registry.transition_status(target, "indexed")
+        ):
             return
-    await _timed("remove_stale", deps.rag.delete(entry.access, key), steps)
+    async with progress.step("remove_stale"):
+        await deps.rag.delete(entry.access, key)
 
 
 async def _delete(
-    job: IndexJob, deps: PipelineDeps, source: FolderSource, steps: dict[str, float]
+    job: IndexJob, deps: PipelineDeps, source: FolderSource, progress: JobProgress
 ) -> None:
-    manifest = await asyncio.to_thread(source.manifest)
+    async with progress.step("snapshot"):
+        manifest = await asyncio.to_thread(source.manifest)
     if job.doc_id in manifest.entries or manifest.error_for(job.doc_id):
         return
     previous = await deps.registry.get(job.doc_id)
@@ -161,42 +168,38 @@ async def _delete(
         return
     if not await deps.registry.transition_status(previous, "indexing"):
         return
+    target = replace(previous, status="indexing", error=None)
+    progress.record = target
 
     if previous.level is not None:
-        await _timed(
-            "index", deps.rag.delete(previous.level, f"{job.doc_id}@v{job.version}"), steps
-        )
-    await _timed(
-        "okf", asyncio.to_thread(deps.okf.set_status, job.doc_id, job.version, "deleted"), steps
-    )
+        async with progress.step("index"):
+            await deps.rag.delete(previous.level, f"{job.doc_id}@v{job.version}")
+    async with progress.step("okf"):
+        await asyncio.to_thread(deps.okf.set_status, job.doc_id, job.version, "deleted")
 
-    current = await asyncio.to_thread(source.manifest)
-    target = await deps.registry.get(job.doc_id)
-    if (
-        job.doc_id not in current.entries
-        and current.error_for(job.doc_id) is None
-        and target is not None
-        and target.status == "indexing"
-    ):
-        await _timed("registry", deps.registry.transition_status(target, "deleted"), steps)
+    async with progress.step("registry"):
+        current = await asyncio.to_thread(source.manifest)
+        if job.doc_id not in current.entries and current.error_for(job.doc_id) is None:
+            await deps.registry.transition_status(target, "deleted")
 
 
 async def process_job(
-    job: IndexJob, deps: PipelineDeps, *, steps: dict[str, float] | None = None
+    job: IndexJob,
+    deps: PipelineDeps,
+    *,
+    steps: dict[str, float] | None = None,
+    progress: JobProgress | None = None,
 ) -> None:
-    if steps is None:
-        steps = {}
+    progress = progress or JobProgress(job, deps.registry, steps=steps if steps is not None else {})
     levels = deps.levels
     if levels is None:
         levels = await asyncio.to_thread(AccessLevels.from_yaml, deps.settings.access_levels_file)
     source = FolderSource(deps.settings.docs_dir, levels)
     try:
         if job.op == "upsert":
-            await _upsert(job, deps, source, steps)
+            await _upsert(job, deps, source, progress)
         else:
-            await _delete(job, deps, source, steps)
+            await _delete(job, deps, source, progress)
     except Exception as exc:
-        current = await deps.registry.get(job.doc_id)
-        if current is not None and current.status == "indexing":
-            await deps.registry.transition_status(current, "failed", str(exc))
+        await progress.fail_document(str(exc))
         raise

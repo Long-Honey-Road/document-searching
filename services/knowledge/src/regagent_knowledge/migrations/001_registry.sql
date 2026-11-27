@@ -28,3 +28,4 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs (status);
 CREATE INDEX IF NOT EXISTS jobs_doc_idx ON jobs (doc_id);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS current_step text;

@@ -10,6 +10,7 @@ from __future__ import annotations
 import configparser
 import logging
 import os
+from asyncio import CancelledError, timeout
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -24,6 +25,7 @@ SENTINEL_WORKSPACE = "lvl__sentinel"
 # ровно по нему; во фрагментах встречаться не может — проверяется при вставке.
 FRAGMENT_SEPARATOR = "\n\n␞␞FRAGMENT␞␞\n\n"
 _PROCESSED = "processed"
+_CANCEL_CLEANUP_TIMEOUT_S = 5.0
 
 
 class RagError(RuntimeError):
@@ -136,15 +138,25 @@ class RagRegistry:
                 raise ValueError("фрагмент содержит служебный разделитель")
         rag = self._rag(level)
         await self.delete(level, doc_key)
-        await rag.ainsert(
-            FRAGMENT_SEPARATOR.join(chunks),
-            split_by_character=FRAGMENT_SEPARATOR,
-            split_by_character_only=True,
-            ids=doc_key,
-            file_paths=doc_key,
-        )
+        try:
+            await rag.ainsert(
+                FRAGMENT_SEPARATOR.join(chunks),
+                split_by_character=FRAGMENT_SEPARATOR,
+                split_by_character_only=True,
+                ids=doc_key,
+                file_paths=doc_key,
+            )
+        except CancelledError:
+            # LightRAG освобождает workspace, но следующий ainsert подхватит
+            # незавершённый документ. Повторами управляет очередь knowledge.
+            try:
+                async with timeout(_CANCEL_CLEANUP_TIMEOUT_S):
+                    await self.delete(level, doc_key)
+            except Exception:
+                log.exception("не удалось очистить отменённую вставку %s в %s", doc_key, level)
+            raise
         status = await rag.doc_status.get_by_id(doc_key)
-        state = str((status or {}).get("status", "missing"))
+        state = (status or {}).get("status", "missing")
         if state != _PROCESSED:
             error = (status or {}).get("error_msg") or (status or {}).get("error") or ""
             raise RagError(

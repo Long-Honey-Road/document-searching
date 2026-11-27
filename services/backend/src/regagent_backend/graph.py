@@ -31,7 +31,12 @@ from regagent_common.contracts import AnswerMeta, AnswerSource
 from regagent_common.settings import CommonSettings
 
 from regagent_backend.agent import generate_answer, last_answer
-from regagent_backend.citations import extract_citations, public_text, verify_citations
+from regagent_backend.citations import (
+    extract_citations,
+    public_text,
+    verify_citations,
+    verify_comparison,
+)
 from regagent_backend.guard import PROMPTS, GuardResult, classify
 from regagent_backend.identity import UserIdentity, current_identity, identity_to_user_dict
 from regagent_backend.knowledge_client import KnowledgeClient
@@ -242,7 +247,19 @@ async def _answer(
         citations = verify_citations(text, set(run.fragments))
         if not areas and any(result.areas_diverge for _, result in run.searches):
             return _reply(ASK_AREA, "ask_area"), run
-        if citations.ok:
+        supported = citations.ok
+        if supported and len(areas) > 1:
+            try:
+                supported = await verify_comparison(
+                    text,
+                    [run.fragments[citation] for citation in extract_citations(text)],
+                    deps.guard_model,
+                    settings.GUARD_MODE,
+                )
+            except (OpenAIError, OutputParserException, ValueError) as exc:
+                log.warning("comparison support check failed: %s", type(exc).__name__)
+                break
+        if supported:
             return _reply_with_sources(text, run, areas, area_source), run
         if (
             "[f:" not in text
@@ -253,7 +270,9 @@ async def _answer(
         if attempt == 0:
             history.append(
                 HumanMessage(
-                    "Предыдущий ответ не прошёл проверку ссылок. "
+                    "Предыдущий ответ не прошёл проверку утверждений и ссылок. "
+                    "Сверь каждое утверждение с процитированным пунктом и его областью. "
+                    "Удали неподтверждённые и противоречащие друг другу утверждения. "
                     "Используй только ссылки из результатов этого запуска. "
                     "Если данных недостаточно, сообщи об этом."
                 )

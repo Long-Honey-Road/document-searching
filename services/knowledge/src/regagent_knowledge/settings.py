@@ -31,12 +31,15 @@ class KnowledgeSettings(CommonSettings):
 
     lightrag_working_dir: Path = Path("/data/lightrag")
     lightrag_extract_gleaning: int = 1
+    lightrag_language: str = Field(default="Russian", min_length=1)
+    lightrag_extraction_json: bool = False
 
     docs_dir: Path = Path("/data/docs")
     okf_dir: Path = Path("/data/okf")
     access_levels_file: Path = Path("config/access_levels.yaml")
     watch_debounce_s: float = Field(default=3, ge=0)
     index_max_retries: int = Field(default=3, ge=0)
+    index_job_timeout_s: float = Field(default=1800, gt=0, allow_inf_nan=False)
 
 
 class RuntimeSettings(KnowledgeSettings):

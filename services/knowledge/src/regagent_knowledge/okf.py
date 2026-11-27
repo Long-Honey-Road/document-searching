@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -16,6 +16,7 @@ from git import Repo
 
 from .manifest import ManifestEntry
 from .normalize import Clause, render_markdown, split_clauses
+from .references import DocumentReferences
 
 RegulationStatus = Literal["active", "deprecated", "deleted"]
 _DOC_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -128,9 +129,17 @@ class OkfStore:
             return revision
         return None
 
-    def write_regulation(self, entry: ManifestEntry, clauses: list[Clause], sha256: str) -> Path:
+    def write_regulation(
+        self,
+        entry: ManifestEntry,
+        clauses: list[Clause],
+        sha256: str,
+        *,
+        references: DocumentReferences | None = None,
+    ) -> Path:
         path = self.root / "docs" / entry.doc_id / f"v{entry.version}.md"
         body = render_markdown(clauses)
+        refs = references or DocumentReferences()
         meta = {
             "type": "regulation",
             "title": entry.title,
@@ -141,7 +150,9 @@ class OkfStore:
             "access": entry.access,
             "effective_from": entry.effective_from,
             "sources": [{"file": entry.file, "sha256": sha256}],
-            "links": [],
+            "links": [asdict(link) for link in refs.links],
+            "links_needing_review": [asdict(link) for link in refs.needs_review],
+            "missing_links": [asdict(link) for link in refs.missing],
         }
         if entry.supersedes is not None:
             meta["supersedes"] = entry.supersedes

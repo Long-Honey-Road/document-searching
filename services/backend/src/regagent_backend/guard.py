@@ -15,6 +15,7 @@ from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
 PROMPTS = Path(__file__).with_name("prompts")
+StructuredMode = Literal["json_schema", "tool"]
 
 
 class GuardResult(BaseModel):
@@ -26,23 +27,19 @@ class GuardResult(BaseModel):
     memory_action: Literal["none", "remember", "forget"]
 
 
-async def classify(
+async def invoke_structured[T: BaseModel](
     model: BaseChatModel,
-    questions: list[str],
-    area_codes: list[str],
-    awaiting_area: bool,
-    mode: Literal["json_schema", "tool"],
-) -> GuardResult:
+    schema: type[T],
+    mode: StructuredMode,
+    prompt: str,
+    data: dict[str, object],
+) -> T:
     classifier = (
-        model.with_structured_output(GuardResult, method="json_schema", strict=True)
+        model.with_structured_output(schema, method="json_schema", strict=True)
         if mode == "json_schema"
-        else model.with_structured_output(GuardResult, method="function_calling")
+        else model.with_structured_output(schema, method="function_calling")
     )
-    prompt = (PROMPTS / "guard.md").read_text(encoding="utf-8")
-    task = json.dumps(
-        {"области": area_codes, "ждём уточнения области": awaiting_area, "сообщения": questions},
-        ensure_ascii=False,
-    )
+    task = json.dumps(data, ensure_ascii=False)
 
     async def invoke() -> object:
         # Изолируем события провайдера и результат классификации от стрима Aegra.
@@ -59,6 +56,22 @@ async def classify(
         raise
     except APIConnectionError:
         response = await invoke()
-    if not isinstance(response, GuardResult):
-        raise ValueError("invalid guard response")
+    if not isinstance(response, schema):
+        raise ValueError(f"invalid structured response for {schema.__name__}")
     return response
+
+
+async def classify(
+    model: BaseChatModel,
+    questions: list[str],
+    area_codes: list[str],
+    awaiting_area: bool,
+    mode: StructuredMode,
+) -> GuardResult:
+    return await invoke_structured(
+        model,
+        GuardResult,
+        mode,
+        (PROMPTS / "guard.md").read_text(encoding="utf-8"),
+        {"области": area_codes, "ждём уточнения области": awaiting_area, "сообщения": questions},
+    )

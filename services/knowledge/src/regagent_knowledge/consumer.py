@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from time import monotonic
 from types import TracebackType
 from typing import Self
 
@@ -12,6 +13,7 @@ from aio_pika.abc import AbstractExchange, AbstractIncomingMessage, AbstractQueu
 from pydantic import ValidationError
 from regagent_common.contracts import IndexJob
 
+from .jobs import IndexRequest, JobProgress
 from .pipeline import PipelineDeps, process_job
 
 log = logging.getLogger(__name__)
@@ -78,10 +80,23 @@ class IndexQueue:
         )
 
 
+async def _attempt(job: IndexJob, deps: PipelineDeps, progress: JobProgress) -> None:
+    deadline = asyncio.timeout(deps.settings.index_job_timeout_s)
+    try:
+        async with deadline:
+            await process_job(job, deps, progress=progress)
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        error = f"превышено время задачи (шаг {progress.current_step})"
+        await progress.fail_document(error)
+        raise TimeoutError(error) from None
+
+
 async def _process_message(message: AbstractIncomingMessage, deps: PipelineDeps) -> None:
     async with message.process(requeue=True, ignore_processed=True):
         try:
-            job = IndexJob.model_validate_json(message.body)
+            job = IndexRequest.model_validate_json(message.body)
         except ValidationError:
             log.warning("некорректное сообщение в %s", _INDEX_JOBS)
             await message.reject(requeue=False)
@@ -96,15 +111,22 @@ async def _process_message(message: AbstractIncomingMessage, deps: PipelineDeps)
                 return
         attempt = 1 if state is None else state.attempts + int(state.status != "indexing")
         while True:
-            await deps.registry.save_job(job, "indexing", attempt)
-            steps: dict[str, float] = {}
+            progress = JobProgress(job, deps.registry, attempt)
+            await deps.registry.save_job(
+                job, "indexing", attempt, current_step=progress.current_step
+            )
+            start = monotonic()
+            progress.event("job", "start", 0)
             try:
-                await process_job(job, deps, steps=steps)
+                await _attempt(job, deps, progress)
             except Exception as exc:
                 error = str(exc)
                 exhausted = attempt > deps.settings.index_max_retries
                 status = "failed" if exhausted else "retrying"
-                await deps.registry.save_job(job, status, attempt, error=error, steps=steps)
+                await deps.registry.save_job(
+                    job, status, attempt, error=error, steps=progress.steps
+                )
+                progress.event("job", "failed", monotonic() - start)
                 log.warning("задача %s, попытка %d: %s", job.job_id, attempt, error)
                 if exhausted:
                     await message.reject(requeue=False)
@@ -112,7 +134,8 @@ async def _process_message(message: AbstractIncomingMessage, deps: PipelineDeps)
                 await asyncio.sleep(attempt)
                 attempt += 1
             else:
-                await deps.registry.save_job(job, "succeeded", attempt, steps=steps)
+                await deps.registry.save_job(job, "succeeded", attempt, steps=progress.steps)
+                progress.event("job", "done", monotonic() - start)
                 return
 
 

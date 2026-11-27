@@ -45,7 +45,7 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 
 | Ключ / очередь | Кто пишет | Кто читает | Тело |
 | --- | --- | --- | --- |
-| `index.jobs` | knowledge.watcher | knowledge.consumer | `{job_id, op: "upsert"|"delete", doc_id, version, path, sha256}`; у `delete` `path` и `sha256` необязательны (D-26) |
+| `index.jobs` | knowledge.watcher, knowledge.reindex | knowledge.consumer | `{job_id, op: "upsert"\|"delete", doc_id, version, path, sha256}`. У `delete` `path` и `sha256` необязательны (D-26). Команда переиндексации добавляет `force: true` к `upsert` (D-45), обычные сообщения используют прежнюю схему. |
 | `practice.publish` | backend (ОКК) | knowledge.consumer | `{practice_id, text, binds: [{doc_id, clause}], mode, areas, verified: {by, at}, source_cluster_id}` |
 | `practice.published` | knowledge | backend | `{practice_id, source_cluster_id, status: "indexed"|"failed", error}` |
 | `qc.events` | knowledge | backend | `{kind: "recheck", reason: "new_version"|"deleted", doc_id, practice_ids: [...]}` |
@@ -121,10 +121,13 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `KNOWLEDGE_TIMEOUT_S` | ожидание ответа knowledge, с (D-24) | `30` |
 | `DOCS_DIR`, `OKF_DIR` | папки документов и OKF | `/data/docs`, `/data/okf` |
 | `WATCH_DEBOUNCE_S`, `INDEX_MAX_RETRIES` | индексация | `3`, `3` |
+| `INDEX_JOB_TIMEOUT_S` | тайм-аут одной попытки индексации, с | `1800` |
 | `CHUNK_MAX_TOKENS` | максимум токенов во фрагменте | `1200` |
 | `SEARCH_TOP_K`, `SEARCH_MODE` | поиск LightRAG | `8`, `mix` |
 | `LIGHTRAG_WORKING_DIR` | рабочий каталог LightRAG (якорь конфигурации хранилищ); на стенде — постоянный том | `/data/lightrag` |
 | `LIGHTRAG_EXTRACT_GLEANING` | повторные проходы извлечения сущностей (каждый удваивает вызовы LLM) | `1` |
+| `LIGHTRAG_LANGUAGE` | язык извлечения сущностей и связей | `Russian` |
+| `LIGHTRAG_EXTRACTION_JSON` | извлечение в JSON, требует поддержки `json_object` на сервере модели | `false` |
 | `AGENT_ESCALATE_AFTER` | после скольких неудач предлагать ОКК | `2` |
 | `AGENT_MAX_STEPS` | предел шагов Deep Agent | `12` |
 | `AGENT_MAX_SEARCHES`, `TOOL_RESULT_MAX_CHARS` | поисков на один ответ; текста фрагментов модели за один поиск, символов (D-24) | `3`, `12000` |
