@@ -112,12 +112,14 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `AREA_CODES` | коды областей через запятую — справочник backend на этап 1 (D-20) | `ДИБ,ДБРЦТ,общий` |
 | `ACCESS_LEVELS_FILE` | YAML уровней доступа | `config/access_levels.yaml` |
 | `KNOWLEDGE_URL`, `KNOWLEDGE_INTERNAL_TOKEN` | адрес и токен knowledge | |
+| `KNOWLEDGE_TIMEOUT_S` | ожидание ответа knowledge, с (D-24) | `30` |
 | `DOCS_DIR`, `OKF_DIR` | папки документов и OKF | `/data/docs`, `/data/okf` |
 | `WATCH_DEBOUNCE_S`, `INDEX_MAX_RETRIES` | индексация | `3`, `3` |
 | `CHUNK_MAX_TOKENS` | максимум токенов во фрагменте | `1200` |
 | `SEARCH_TOP_K`, `SEARCH_MODE` | поиск LightRAG | `8`, `mix` |
 | `AGENT_ESCALATE_AFTER` | после скольких неудач предлагать ОКК | `2` |
 | `AGENT_MAX_STEPS` | предел шагов Deep Agent | `12` |
+| `AGENT_MAX_SEARCHES`, `TOOL_RESULT_MAX_CHARS` | поисков на один ответ; текста фрагментов модели за один поиск, символов (D-24) | `3`, `12000` |
 | `MEMORY_AREA_TTL_DAYS`, `MEMORY_MAX_ACTIVE_AREAS` | память | `14`, `3` |
 | `QUESTION_MAX_CHARS`, `RATE_LIMIT_PER_USER_PER_MIN` | лимиты | `2000`, `20` |
 | `QC_CLUSTER_SIMILARITY`, `QC_NOTIFY_TO` | ОКК | `0.85`, `qc@example.org` |
