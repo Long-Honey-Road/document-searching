@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from math import isfinite
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,7 @@ class TimedAnswer(BaseModel):
     meta: dict[str, Any]
     first_words_s: float | None
     total_s: float | None
+    run_id: UUID | None = None
 
 
 class Checks(BaseModel):

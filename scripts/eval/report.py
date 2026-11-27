@@ -10,6 +10,7 @@ from pathlib import Path
 from statistics import median, quantiles
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -58,6 +59,7 @@ class CaseResult(BaseModel):
     answer: TimedAnswer | None = None
     checks: Checks | None = None
     error: str | None = None
+    error_run_id: UUID | None = None
     review: Review | None = None
     diagnosis: Diagnosis | None = None
 
@@ -169,6 +171,8 @@ def _failure(case: CaseResult) -> str:
         f"**Ожидаемые пункты** {', '.join(expected.expected_clauses) or '—'}",
         "",
     ]
+    if run_id := (answer.run_id if answer else case.error_run_id):
+        lines.extend([f"**ID хода** `{run_id}`", ""])
     if answer:
         lines.extend(
             [

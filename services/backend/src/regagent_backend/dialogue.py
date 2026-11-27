@@ -29,6 +29,10 @@ def parse_clarification(text: str) -> str | None:
     prefix, _, question = text.partition(":")
     if prefix + ":" != CLARIFY_PREFIX:
         return None
+    return valid_clarification(question)
+
+
+def valid_clarification(question: str) -> str | None:
     question = question.strip()
     if (
         4 <= len(question) <= 280

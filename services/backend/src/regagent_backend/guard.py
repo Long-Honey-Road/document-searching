@@ -26,6 +26,8 @@ class GuardResult(BaseModel):
     search_queries: list[str]
     memory_action: Literal["none", "remember", "forget"]
     qc_action: Literal["none", "draft", "guide"]
+    missing_detail: str | None
+    area_only: bool
 
 
 async def invoke_structured[T: BaseModel](

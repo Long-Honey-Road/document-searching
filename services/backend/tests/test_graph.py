@@ -76,6 +76,8 @@ def guard(*areas: str, on_topic: bool = True) -> dict[str, str]:
                 "search_queries": [],
                 "memory_action": "none",
                 "qc_action": "none",
+                "missing_detail": None,
+                "area_only": False,
             }
         )
     }
@@ -573,3 +575,88 @@ async def test_unavailable_search_does_not_offer_qc_for_a_false_gap(stand: Any) 
     assert meta(last).outcome == "fallback"
     assert "сейчас недоступен" in last.text
     assert "Передать в ОКК" not in last.text
+
+
+async def test_missing_calculation_type_does_not_guess_a_regulation(stand: Any) -> None:
+    model, graph, lookups = stand
+    classification = json.loads(guard("общий")["content"])
+    classification["missing_detail"] = "Какой именно расчёт нужно проверить?"
+    model.responses = [
+        {"content": json.dumps(classification)},
+        {"content": "Срок — один рабочий день [f:dib-project-activity@1#2.7]."},
+    ]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Сколько времени даётся на проверку расчёта по общему порядку?")]},
+        config=CONFIG,
+    )
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "ask_clarification"
+    assert reply.text == "Какой именно расчёт нужно проверить?"
+    assert not lookups
+
+
+async def test_cited_inconclusive_answer_routes_to_qc(stand: Any) -> None:
+    model, graph, _ = stand
+    draft = (
+        "Подтвердить или опровергнуть наличие порядка компенсации я не могу. "
+        "Найденный регламент регулирует другой вопрос [f:dib-project-activity@1#2.7]."
+    )
+    model.responses = [
+        guard("ДИБ"),
+        {"content": draft},
+        {"content": '{"outcome":"not_found","question":null}'},
+    ]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Как в ДИБ компенсируют парковку при удалённой работе?")]},
+        config=CONFIG,
+    )
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "not_found"
+    assert not meta(reply).sources
+    assert "Передать в ОКК" in reply.text
+    assert "другой вопрос" not in reply.text
+    evidence = model.requests[-1]["messages"][1]["content"]
+    assert "парковку" in evidence and PUNKT.text in evidence
+
+
+async def test_area_only_reply_retries_original_question_after_fallback(stand: Any) -> None:
+    model, graph, lookups = stand
+    wrong = {"content": "Ответ со старым пунктом [f:unknown@1#1]."}
+    model.responses = [guard("ДИБ"), wrong, wrong]
+    first = await graph.ainvoke(
+        {"messages": [("human", "Кто назначает руководителя проекта?")]}, config=CONFIG
+    )
+    assert meta(first["messages"][-1]).outcome == "fallback"
+
+    classification = json.loads(guard("ДИБ")["content"])
+    classification["area_only"] = True
+    model.responses = [
+        {"content": json.dumps(classification)},
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    second = await graph.ainvoke(
+        {"messages": [*first["messages"], ("human", "Для Дирекции ИБ.")]}, config=CONFIG
+    )
+    assert meta(second["messages"][-1]).outcome == "answer"
+    assert "Кто назначает руководителя проекта?" in lookups[-1]["query"]
+    assert "Для Дирекции ИБ." in lookups[-1]["query"]
+
+
+async def test_evidence_check_keeps_a_directly_supported_negative_answer(stand: Any) -> None:
+    model, graph, _ = stand
+    clause = "Координатору запрещено подтверждать назначение РП при неполном расчёте."
+    model.fragments = [PUNKT.model_copy(update={"text": clause})]
+    supported_draft = "Подтвердить назначение нельзя [f:dib-project-activity@1#2.7]."
+    model.responses = [
+        guard("ДИБ"),
+        {"content": supported_draft},
+        {"content": '{"outcome":"answer","question":null}'},
+    ]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Можно подтвердить назначение РП в ДИБ без полного расчёта?")]},
+        config=CONFIG,
+    )
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "answer"
+    assert meta(reply).sources[0].fragment_id == PUNKT.fragment_id
+    assert reply.text == supported_draft

@@ -181,7 +181,7 @@ async def run_cases(
                     question=question, error=f"Запрос завершился с HTTP {exc.response.status_code}"
                 )
             except StandError as exc:
-                case = CaseResult(question=question, error=str(exc))
+                case = CaseResult(question=question, error=str(exc), error_run_id=exc.run_id)
 
             leak = bool(case.checks and case.checks.leaks)
             if leak:

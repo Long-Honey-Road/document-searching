@@ -42,7 +42,9 @@ from regagent_backend.agent import generate_answer, last_answer
 from regagent_backend.citations import (
     extract_citations,
     missing_overrides,
+    needs_evidence_review,
     public_text,
+    review_evidence,
     verify_citations,
     verify_comparison,
 )
@@ -57,6 +59,7 @@ from regagent_backend.dialogue import (
     parse_clarification,
     qc_draft,
     stored_meta,
+    valid_clarification,
 )
 from regagent_backend.events import events, run_fields
 from regagent_backend.guard import PROMPTS, GuardResult, classify
@@ -204,6 +207,16 @@ def _unanswered(run: SearchRun) -> AIMessage:
     return _reply(NOT_FOUND, "not_found", reason=reason)
 
 
+def _ask_detail(question: str, areas: tuple[str, ...], source: AreaSource) -> AIMessage:
+    return _reply(
+        question,
+        "ask_clarification",
+        area=areas[0] if len(areas) == 1 else None,
+        area_source=source,
+        reason="missing_detail",
+    )
+
+
 async def _memory_action(
     memory: MemoryService,
     identity: UserIdentity,
@@ -284,6 +297,7 @@ async def _answer(
     # прошлого запуска не передаются модели и не могут подтвердить ссылку.
     history: list[AnyMessage] = [HumanMessage(question) for question in questions]
     initial_query = "\n".join(continuation.questions) if continuation else questions[-1]
+    can_clarify = continuation is None or continuation.clarification_count < MAX_DETAIL_QUESTIONS
     queries = list(
         dict.fromkeys(query.strip()[: settings.QUESTION_MAX_CHARS] for query in search_queries)
     )
@@ -340,20 +354,39 @@ async def _answer(
         if text == NO_ANSWER:
             return _unanswered(run), run
         if clarification := parse_clarification(text):
-            if continuation and continuation.clarification_count >= MAX_DETAIL_QUESTIONS:
+            if not can_clarify:
                 return _unanswered(run), run
-            return _reply(
-                clarification,
-                "ask_clarification",
-                area=areas[0] if len(areas) == 1 else None,
-                area_source=area_source,
-                reason="missing_detail",
-            ), run
+            return _ask_detail(clarification, areas, area_source), run
         supported = citations.ok and not text.startswith((CLARIFY_PREFIX, NO_ANSWER))
         reason = "citations_rejected"
         overridden = missing_overrides(text, run.fragments) if supported else []
         if overridden:
             supported, reason = False, "practice_not_cited"
+        if supported and needs_evidence_review(text):
+            try:
+                with events.timed("answer.evidence_check", **ids) as event:
+                    review = await review_evidence(
+                        initial_query,
+                        text,
+                        [run.fragments[citation] for citation in extract_citations(text)],
+                        deps.guard_model,
+                        settings.GUARD_MODE,
+                        ids,
+                    )
+                    event["status"] = "ok" if review.outcome == "answer" else "rejected"
+            except (OpenAIError, OutputParserException, ValueError) as exc:
+                log.warning("answer evidence check failed: %s", type(exc).__name__)
+                if trace is not None:
+                    trace.error_code = type(exc).__name__
+                reason = "evidence_check_error"
+                break
+            if review.outcome == "not_found":
+                return _unanswered(run), run
+            if review.outcome == "ask_clarification":
+                clarification = valid_clarification(review.question or "")
+                if not clarification or not can_clarify:
+                    return _unanswered(run), run
+                return _ask_detail(clarification, areas, area_source), run
         if supported and len(areas) > 1:
             try:
                 with events.timed("answer.comparison_check", **ids) as event:
@@ -481,6 +514,23 @@ async def _turn(
         and previous.area_used in allowed
     ):
         areas, source = (previous.area_used,), previous.area_source
+
+    if (
+        continuation is None
+        and guard.area_only
+        and len(areas) == 1
+        and previous
+        and previous.outcome in {"fallback", "not_found"}
+        and isinstance(messages[-2], AIMessage)
+    ):
+        prior = current_topic(messages[:-2], limit)
+        if prior.questions:
+            continuation = Topic([*prior.questions, questions[-1]], prior.clarification_count)
+            source = "asked"
+
+    can_clarify = continuation is None or continuation.clarification_count < MAX_DETAIL_QUESTIONS
+    if can_clarify and (detail := valid_clarification(guard.missing_detail or "")):
+        return _ask_detail(detail, areas, source)
 
     now = datetime.now(UTC)
     records = await memory.load(identity.sub) if memory is not None else []

@@ -53,6 +53,8 @@ async def test_stream_returns_new_answer_metadata_and_both_timings(monkeypatch):
     old = {"type": "ai", "content": "Предыдущий ответ"}
     meta = {"verified": True, "outcome": "answer", "sources": []}
     answer = {"type": "ai", "content": "Ответ", "additional_kwargs": {"answer_meta": meta}}
+    run_id = "019ad929-40a5-748d-bc72-4de1d7295112"
+    run_metadata = "event: metadata\ndata: " + json.dumps({"run_id": run_id}) + "\n\n"
     clock = iter([10.0, 10.3, 10.5])
     monkeypatch.setattr("scripts.eval.client.monotonic", lambda: next(clock))
 
@@ -65,7 +67,11 @@ async def test_stream_returns_new_answer_metadata_and_both_timings(monkeypatch):
         return httpx.Response(
             200,
             headers={"Content-Type": "text/event-stream"},
-            text=values(old) + values(old, sent) + values(old, sent, answer) + "event: end\n\n",
+            text=run_metadata
+            + values(old)
+            + values(old, sent)
+            + values(old, sent, answer)
+            + "event: end\n\n",
         )
 
     async with httpx.AsyncClient(
@@ -74,6 +80,7 @@ async def test_stream_returns_new_answer_metadata_and_both_timings(monkeypatch):
         answer = await StandSession(http, "assistant").ask("thread", "Новый вопрос", 2)
     assert answer.text == "Ответ"
     assert answer.meta == meta
+    assert str(answer.run_id) == run_id
     assert answer.first_words_s == pytest.approx(0.3)
     assert answer.total_s == pytest.approx(0.5)
 
@@ -129,6 +136,9 @@ async def test_stream_times_out_even_when_transport_does_not_finish():
 
 def test_error_stream_does_not_surface_response_payload():
     turn = Turn(start=0)
+    run_id = "019ad929-40a5-748d-bc72-4de1d7295112"
+    turn.add("metadata", {"run_id": run_id})
     with pytest.raises(StandError, match="ошибке выполнения") as exc:
         turn.add("error", {"message": "secret"})
     assert "secret" not in str(exc.value)
+    assert str(exc.value.run_id) == run_id
