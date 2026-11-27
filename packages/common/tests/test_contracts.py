@@ -1,0 +1,148 @@
+import pytest
+from pydantic import ValidationError
+from regagent_common.contracts import (
+    AnswerMeta,
+    Area,
+    AreasResponse,
+    ClauseRequest,
+    ClauseResponse,
+    Fragment,
+    IndexJob,
+    SearchRequest,
+    SearchResponse,
+)
+
+# Примеры — из dev_docs/06-contracts.md
+FRAGMENT = {
+    "fragment_id": "dib-project-activity@3#2.7",
+    "doc_id": "dib-project-activity",
+    "version": 3,
+    "title": "Проектная деятельность Дирекции ИБ",
+    "clause": "2.7",
+    "area": "ДИБ",
+    "kind": "regulation",
+    "text": "...",
+    "score": 0.83,
+}
+
+
+def test_search_request_example_parses() -> None:
+    req = SearchRequest.model_validate(
+        {"query": "кто назначает РП", "levels": ["public"], "areas": ["ДИБ"], "top_k": 8}
+    )
+    assert req.areas == ["ДИБ"]
+
+
+def test_search_request_defaults() -> None:
+    req = SearchRequest(query="кто назначает РП", levels=["public"])
+    assert req.areas == []
+    assert req.top_k is None
+
+
+def test_search_request_rejects_empty_query() -> None:
+    with pytest.raises(ValidationError):
+        SearchRequest(query="", levels=["public"])
+
+
+def test_search_response_example_roundtrip() -> None:
+    body = {
+        "fragments": [FRAGMENT],
+        "areas_found": ["ДИБ", "ДБРЦТ", "общий"],
+        "areas_diverge": True,
+        "low_confidence": False,
+    }
+    resp = SearchResponse.model_validate(body)
+    assert resp.fragments[0] == Fragment.model_validate(FRAGMENT)
+    assert resp.model_dump() == body
+
+
+def test_practice_fragment_may_have_no_version() -> None:
+    f = Fragment.model_validate(
+        {**FRAGMENT, "fragment_id": "practice:14", "version": None, "kind": "practice"}
+    )
+    assert f.version is None
+
+
+def test_unknown_fragment_kind_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Fragment.model_validate({**FRAGMENT, "kind": "rumor"})
+
+
+def test_clause_request_and_response() -> None:
+    req = ClauseRequest.model_validate(
+        {"doc_id": "dib-project-activity", "clause": "2.7", "version": None, "levels": ["public"]}
+    )
+    assert req.version is None
+    resp = ClauseResponse.model_validate({"fragment": FRAGMENT, "neighbors": [FRAGMENT]})
+    assert resp.neighbors[0].clause == "2.7"
+
+
+def test_index_job_upsert_requires_path_and_sha() -> None:
+    with pytest.raises(ValidationError):
+        IndexJob(op="upsert", doc_id="x", version=1)
+
+
+def test_index_job_delete_without_file() -> None:
+    job = IndexJob(op="delete", doc_id="x", version=1)
+    assert job.path is None
+
+
+def test_index_job_envelope_fields() -> None:
+    job = IndexJob(op="upsert", doc_id="x", version=1, path="a/x.docx", sha256="ab")
+    dumped = job.model_dump(mode="json")
+    assert dumped["type"] == "index.jobs"
+    assert dumped["message_id"] and dumped["created_at"] and dumped["job_id"]
+    assert IndexJob.model_validate(dumped) == job
+
+
+def test_answer_meta_example_parses() -> None:
+    meta = AnswerMeta.model_validate(
+        {
+            "verified": True,
+            "area_used": "ДИБ",
+            "area_source": "memory",
+            "sources": [
+                {
+                    "n": 1,
+                    "fragment_id": "dib-project-activity@3#2.7",
+                    "title": "Проектная деятельность Дирекции ИБ",
+                    "clause": "2.7",
+                    "version": 3,
+                    "kind": "regulation",
+                }
+            ],
+            "outcome": "answer",
+        }
+    )
+    assert meta.sources[0].n == 1
+
+
+def test_answer_meta_rejects_unknown_outcome() -> None:
+    with pytest.raises(ValidationError):
+        AnswerMeta.model_validate(
+            {
+                "verified": False,
+                "area_used": None,
+                "area_source": "none",
+                "sources": [],
+                "outcome": "maybe",
+            }
+        )
+
+
+def test_areas_response() -> None:
+    resp = AreasResponse.model_validate(
+        {
+            "areas": [
+                {
+                    "code": "ДИБ",
+                    "title": "Дирекция ИБ",
+                    "synonyms": ["Дирекция информационной безопасности"],
+                }
+            ]
+        }
+    )
+    assert resp.areas[0] == Area(
+        code="ДИБ", title="Дирекция ИБ", synonyms=["Дирекция информационной безопасности"]
+    )
+    assert Area(code="общий", title="Общий").synonyms == []
