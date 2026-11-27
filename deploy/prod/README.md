@@ -120,9 +120,9 @@ docker logs --tail 30 regagent-prod-tunnel-1     # ждём "Registered tunnel c
 docker rm -f regagent-prod-tunnel
 ```
 
-Bypass, если понадобится пустить людей без Access: Zero Trust → Access → Applications
-→ приложение `regagent.honey-road.tech` → Policies → политика с Action **Bypass**,
-Include **Everyone**, выше политики Allow. Защитой останется только вход Keycloak.
+Открыть стенд для демо без Access (Bypass на весь hostname, админка Keycloak остаётся
+за Access) — пошагово в [cloudflare-bypass.md](cloudflare-bypass.md). Сначала проверить,
+что у маршрута туннеля выключено **Protect with Access**, иначе после Bypass будет 403.
 
 ## Диагностика
 
