@@ -95,6 +95,30 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 
 Ошибки — RFC 9457 (`application/problem+json`).
 
+## События сервисов (журнал)
+
+Каждое событие — одна JSON-строка в stdout контейнера, пишет `regagent_common.events.EventLog(<service>)` (D-52). Обычные логи сервиса (LightRAG, uvicorn, Aegra) идут отдельно, события в них не дублируются.
+
+| Поле | Что | Пример |
+| --- | --- | --- |
+| `ts` | время UTC, миллисекунды | `2026-11-28T01:15:42.297Z` |
+| `service` | `backend`, `knowledge`, `deploy` | `backend` |
+| `event` | `<область>.<действие>`, имя из списка ниже | `guard.classify` |
+| `status` | исход, низкокардинальный: `ok`, `error`, `empty`, `rejected`, `timeout` или свой для события | `ok` |
+| `duration_ms` | длительность, целое | `412` |
+| `error_code` | код причины: имя исключения или свой код | `APITimeoutError` |
+| связь | `run_id`, `thread_id`, `request_id`, `job_id`, `doc_id`, `ticket_id`, `practice_id` | `run_id: "…"` |
+| прочее | короткие коды и числа: `area`, `outcome`, `model`, `operation`, `fragments`, `input_tokens`… | |
+
+Метки для агрегации (Loki, Grafana) — только `service`, `event`, `status`; идентификаторы остаются полями.
+
+Ограничения, которые соблюдает код:
+- поля с именами про тексты и секреты (`text`, `query`, `question`, `prompt`, `answer`, `message`, `content`, `comment`, `password`, `secret`, `token`, `api_key`, `authorization`, `cookie`) отбрасываются. Счётчики `input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens` разрешены;
+- отбрасываются строки длиннее 128 символов или с переводом строки, а также значения не из «строка, число, флаг, `null`, список строк»;
+- список длиннее 50 элементов обрезается, полная длина — в `<поле>_total`;
+- имена отброшенных полей пишутся в `dropped_fields`;
+- запись события никогда не бросает исключение.
+
 ## Переменные `.env`
 
 Адреса и модели в `CommonSettings` (`LLM_BASE_URL`, `LLM_MODEL`, `EMBEDDINGS_*`, `RERANK_BASE_URL`, `RERANK_MODEL`) обязательны и без значений по умолчанию: пустая переменная считается отсутствующей, сервис падает при старте (D-27). Для `ENV=stand` релиз дополнительно проверяет публичные адреса, `VITE_*` и заглушки (D-38).
