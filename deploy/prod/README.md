@@ -143,7 +143,7 @@ docker rm -f regagent-prod-tunnel
 
 ## Диагностика
 
-Решения выкатки и откаты, кроме `logs/deploy.log`, пишутся JSON-строками в `logs/events.jsonl` (`deploy.decision`, `deploy.rollback`, D-52). События сервисов — в `c logs --no-log-prefix <сервис>` (функция `c` — ниже), строки, начинающиеся с `{`:
+Графики и поиск по событиям — Grafana на `grafana.honey-road.tech`, запуск в [../grafana/README.md](../grafana/README.md). Решения выкатки и откаты, кроме `logs/deploy.log`, пишутся JSON-строками в `logs/events.jsonl` (`deploy.decision`, `deploy.rollback`, D-52). События сервисов — в `c logs --no-log-prefix <сервис>` (функция `c` — ниже), строки, начинающиеся с `{`:
 
 ```sh
 c logs --no-log-prefix --since 30m backend | grep '^{' | grep '"turn.result"' | tail -5

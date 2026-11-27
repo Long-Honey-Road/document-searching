@@ -1,0 +1,71 @@
+// Логи контейнеров стенда и events.jsonl выкатки → Loki.
+// Строки событий (D-52) — JSON с полями event и status: из них делаются метки,
+// остальные поля читаются в запросах через `| json`.
+
+discovery.docker "regagent" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("REGAGENT_PROJECT")]
+  }
+}
+
+discovery.relabel "regagent" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "regagent" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.regagent.targets
+  relabel_rules = discovery.relabel.regagent.rules
+  labels        = { source = "docker" }
+  forward_to    = [loki.process.events.receiver]
+}
+
+local.file_match "deploy" {
+  path_targets = [{
+    "__path__" = "/var/log/regagent/events.jsonl",
+    "service"  = "deploy",
+    "source"   = "file",
+  }]
+}
+
+loki.source.file "deploy" {
+  targets    = local.file_match.deploy.targets
+  forward_to = [loki.process.events.receiver]
+}
+
+loki.process "events" {
+  // Только строки, начинающиеся с «{», — события; прочие логи идут как есть
+  stage.match {
+    selector = "{service=~\".+\"} |~ \"^[{]\""
+
+    stage.json {
+      expressions = { event = "event", status = "status" }
+    }
+
+    stage.labels {
+      values = { event = "", status = "" }
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

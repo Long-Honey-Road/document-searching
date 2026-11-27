@@ -1,0 +1,72 @@
+# Мониторинг RegAgent (D-65): отдельный проект, не зависит от релизов стенда.
+# Запуск: docker compose up -d (рядом .env по образцу .env.example).
+name: regagent-grafana
+
+services:
+  grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.honey-road.tech
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # Применяется только при первом старте (как пароли Keycloak), дальше — grafana cli
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/etc/grafana/dashboards:ro
+    ports:
+      # Только для проверки с самого Mac; снаружи — через туннель
+      - "127.0.0.1:${GRAFANA_PORT:-13000}:3000"
+    depends_on:
+      - loki
+
+  loki:
+    image: grafana/loki:3.5.0
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+
+  alloy:
+    image: grafana/alloy:v1.10.0
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      REGAGENT_PROJECT: ${REGAGENT_PROJECT:-regagent-prod}
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      # Чтение логов контейнеров стенда. Сокет даёт доступ к Docker API: в alloy ничего не добавлять
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # logs/events.jsonl выкатки (deploy.decision, deploy.rollback)
+      - ${REGAGENT_LOGS_DIR:?REGAGENT_LOGS_DIR is required}:/var/log/regagent:ro
+    depends_on:
+      - loki
+
+  tunnel:
+    # Тот же образ, что у туннеля стенда (deploy/prod/deploy.py, TUNNEL_IMAGE)
+    image: cloudflare/cloudflared:2026.10.7
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?TUNNEL_TOKEN is required}
+    depends_on:
+      - grafana
+
+volumes:
+  grafana-data:
+  loki-data:
+  alloy-data:
