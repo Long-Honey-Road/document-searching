@@ -45,6 +45,7 @@ from regagent_backend.guard import PROMPTS, GuardResult, classify
 from regagent_backend.identity import UserIdentity, current_identity, identity_to_user_dict
 from regagent_backend.knowledge_client import KnowledgeClient
 from regagent_backend.memory import MemoryService, build_memory_tools, memory_service
+from regagent_backend.qc_turn_sink import QcTurnSink
 from regagent_backend.rate_limit import AccountRateLimit
 from regagent_backend.settings import BackendSettings
 from regagent_backend.tools import SearchRun, build_search_tools
@@ -90,7 +91,7 @@ class State(Conversation, total=False):
 class TurnSink(Protocol):
     """Хранилище итогов хода (поток B). Повтор одного ``run_id`` должен давать одну запись."""
 
-    async def record(self, report: TurnReport) -> None: ...
+    async def record(self, report: TurnReport, identity: UserIdentity) -> None: ...
 
 
 TURN_REPORT_TIMEOUT_S = 2.0
@@ -135,7 +136,11 @@ def _runtime_deps() -> AgentDeps:
 
     http = httpx.AsyncClient(timeout=settings.KNOWLEDGE_TIMEOUT_S)
     return AgentDeps(
-        settings, chat("guard"), chat("agent"), KnowledgeClient(settings.KNOWLEDGE_URL, token, http)
+        settings,
+        chat("guard"),
+        chat("agent"),
+        KnowledgeClient(settings.KNOWLEDGE_URL, token, http),
+        turn_sink=QcTurnSink(),
     )
 
 
@@ -517,7 +522,7 @@ async def _report_turn(
     )
     started = time.perf_counter()
     try:
-        await wait_for(sink.record(report), TURN_REPORT_TIMEOUT_S)
+        await wait_for(sink.record(report, identity), TURN_REPORT_TIMEOUT_S)
     except Exception as exc:  # аналитика не должна менять уже готовый ответ
         events.emit(
             "turn.report",

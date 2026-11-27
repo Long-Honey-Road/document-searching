@@ -19,9 +19,11 @@ RUN_CONFIG = {"configurable": {**CONFIG["configurable"], "run_id": "run-7", "thr
 class Sink:
     def __init__(self, fail: bool = False) -> None:
         self.reports: list[TurnReport] = []
+        self.identities: list[object] = []
         self.fail = fail
 
-    async def record(self, report: TurnReport) -> None:
+    async def record(self, report: TurnReport, identity: object) -> None:
+        self.identities.append(identity)
         if self.fail:
             raise RuntimeError("analytics down")
         self.reports.append(report)
@@ -53,6 +55,7 @@ async def test_answer_turn_reports_question_area_fragments_and_citations(stand: 
     assert (report.area, report.area_source) == ("ДИБ", "question")
     assert report.fragments == [PUNKT.fragment_id] and report.cited == [PUNKT.fragment_id]
     assert (report.practice_used, report.searches) == (False, 1)
+    assert sink.identities[0].levels == frozenset({"public"})
 
 
 async def test_empty_search_is_reported(stand: Any) -> None:
