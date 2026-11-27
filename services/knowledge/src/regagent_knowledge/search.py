@@ -13,7 +13,7 @@ from itertools import islice, pairwise, zip_longest
 from time import monotonic
 from typing import Protocol
 
-from regagent_common.contracts import Fragment, SearchRequest, SearchResponse
+from regagent_common.contracts import Fragment, PracticeSource, SearchRequest, SearchResponse
 from regagent_common.fragments import FragmentHeader, fragment_id, parse_header
 
 from .manifest import COMMON_AREA
@@ -139,7 +139,7 @@ def _matches_access(header: FragmentHeader, access: DocumentRecord | str | None)
             and access.status == "indexed"
             and access.level == header.level
             and access.version is not None
-            and (header.is_practice or access.version == header.version)
+            and access.version == header.version
         )
     return access == header.level
 
@@ -154,6 +154,8 @@ async def search(
     default_top_k: int = DEFAULT_SEARCH_TOP_K,
     registry_snapshot: Callable[[], Awaitable[list[DocumentRecord]]] | None = None,
     indexed_clauses: Callable[[DocumentRecord], Awaitable[list[Clause]]] | None = None,
+    practice_lookup: Callable[[FragmentHeader, str], Awaitable[PracticeSource | None]]
+    | None = None,
     rerank_candidate_limit: int = DEFAULT_RERANK_CANDIDATE_LIMIT,
     rerank_text_max_chars: int = DEFAULT_RERANK_TEXT_MAX_CHARS,
 ) -> SearchResponse:
@@ -179,6 +181,7 @@ async def search(
     allowed_areas = {*req.areas, COMMON_AREA} if req.areas else None
     acl: dict[str, DocumentRecord | str | None] = {}
     candidates: dict[tuple[str, str, str], Fragment] = {}
+    practice_chunks: dict[tuple[str, str], tuple[FragmentHeader, str]] = {}
     retrieved_docs: set[str] = set()
     query_words = search_tokens(req.query)
     query_terms = set(query_words)
@@ -201,6 +204,20 @@ async def search(
             if allowed_areas is not None and header.area not in allowed_areas:
                 continue
             section = _fragment(header, raw)
+            if header.is_practice:
+                practice = (
+                    await practice_lookup(header, raw) if practice_lookup is not None else None
+                )
+                if practice is None:
+                    continue
+                section.practice = practice
+                section.title = (
+                    f"Пояснение к регламенту «{access.title or header.doc_id}»"
+                    if (isinstance(access, DocumentRecord))
+                    else "Пояснение по практике"
+                )
+                section.version = None
+                practice_chunks[section.fragment_id, section.area] = (header, raw)
             exact: list[Fragment] = []
             if not header.is_practice:
                 if indexed_clauses is not None and isinstance(access, DocumentRecord):
@@ -251,10 +268,33 @@ async def search(
     updated = await asyncio.gather(*(levels_lookup(doc_id) for doc_id in doc_ids))
     current_acl = dict(zip(doc_ids, updated, strict=True))
     confident = []
+    anchors: dict[str, Fragment] = {}
     for fragment, score in scored:
         if current_acl[fragment.doc_id] != acl[fragment.doc_id]:
             log.warning("security: запись реестра изменилась во время реранка")
             continue
+        if fragment.practice is not None and practice_lookup is not None:
+            header, raw = practice_chunks[fragment.fragment_id, fragment.area]
+            if await practice_lookup(header, raw) != fragment.practice:
+                continue
+            record = current_acl[fragment.doc_id]
+            if indexed_clauses is not None and isinstance(record, DocumentRecord):
+                clauses = await indexed_clauses(record)
+                clause = next((part for part in clauses if part.number == header.clause), None)
+                if clause is None:
+                    continue
+                anchor_id = fragment_id(replace(header, practice_id=None, mode=None))
+                anchors[fragment.fragment_id] = Fragment(
+                    fragment_id=anchor_id,
+                    doc_id=header.doc_id,
+                    version=header.version,
+                    title=record.title or header.doc_id,
+                    clause=header.clause,
+                    area=header.area,
+                    kind="regulation",
+                    text=clause.text,
+                    score=score,
+                )
         fragment.score = score
         confident.append(fragment)
     confident.sort(key=lambda fragment: fragment.score, reverse=True)
@@ -263,8 +303,16 @@ async def search(
     for fragment in confident:
         unique.setdefault(fragment.fragment_id, fragment)
 
+    selected: dict[str, Fragment] = {}
+    for fragment in unique.values():
+        if len(selected) >= top_k:
+            break
+        selected.setdefault(fragment.fragment_id, fragment)
+        if len(selected) < top_k and (anchor := anchors.get(fragment.fragment_id)) is not None:
+            selected.setdefault(anchor.fragment_id, anchor)
+
     return SearchResponse(
-        fragments=list(unique.values())[:top_k],
+        fragments=list(selected.values()),
         areas_found=sorted(areas),
         areas_diverge=not req.areas and len(areas) > 1,
         low_confidence=bool(fragments) and not scored,
