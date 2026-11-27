@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 import re
 import time
-from asyncio import create_task, gather
+from asyncio import create_task, gather, wait_for
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, Protocol, TypedDict
 
 import httpx
 from langchain_core.exceptions import OutputParserException
@@ -28,7 +28,7 @@ from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
 from openai import OpenAIError
 from pydantic import SecretStr
-from regagent_common.contracts import AnswerMeta, AnswerSource
+from regagent_common.contracts import AnswerMeta, AnswerSource, TurnOutcome, TurnReport
 from regagent_common.settings import CommonSettings
 
 from regagent_backend.agent import generate_answer, last_answer
@@ -85,12 +85,27 @@ class State(Conversation, total=False):
     result: AIMessage | None
 
 
+class TurnSink(Protocol):
+    """Хранилище итогов хода (поток B). Повтор одного ``run_id`` должен давать одну запись."""
+
+    async def record(self, report: TurnReport) -> None: ...
+
+
+TURN_REPORT_TIMEOUT_S = 2.0
+# Команды памяти и пустые запуски — не вопросы для аналитики ОКК
+_NOT_REPORTED = frozenset(
+    {"no_question", "memory_remember", "memory_forget", "memory_area_unclear", "memory_unavailable"}
+)
+_UNSUPPORTED = frozenset({"citations_rejected", "comparison_rejected", "low_confidence"})
+
+
 @dataclass(frozen=True)
 class AgentDeps:
     settings: BackendSettings
     guard_model: BaseChatModel
     agent_model: BaseChatModel
     knowledge: KnowledgeClient
+    turn_sink: TurnSink | None = None
 
 
 @lru_cache(maxsize=1)
@@ -416,6 +431,86 @@ async def _turn(
     return reply
 
 
+def report_outcome(
+    outcome: str, reason: str | None, error_code: str | None, unavailable: int, fragments: int
+) -> TurnOutcome:
+    """Исход хода для аналитики ОКК по данным запуска, без сигнала от модели."""
+    if outcome == "answer":
+        return "answered"
+    if unavailable and not fragments:
+        return "search_unavailable"
+    if outcome == "refusal":
+        return "refused"
+    if outcome == "ask_area":
+        return "ask_area"
+    if reason in _UNSUPPORTED:
+        return "unsupported"
+    if outcome == "not_found":
+        return "empty_search"
+    if error_code is not None and "Timeout" in error_code:
+        return "model_timeout"
+    return "error"
+
+
+async def _report_turn(
+    sink: TurnSink,
+    trace: TurnTrace,
+    result: AIMessage,
+    state: State,
+    identity: UserIdentity,
+    config: RunnableConfig,
+) -> None:
+    ids = run_fields(config)
+    if trace.reason in _NOT_REPORTED or "run_id" not in ids:
+        return
+    question = next(
+        (
+            m.text.strip()
+            for m in reversed(state.get("messages", []))
+            if isinstance(m, HumanMessage)
+        ),
+        "",
+    )
+    meta = AnswerMeta.model_validate(result.additional_kwargs["answer_meta"])
+    run = trace.run
+    report = TurnReport(
+        run_id=ids["run_id"],
+        thread_id=ids.get("thread_id"),
+        user_sub=identity.sub,
+        at=datetime.now(UTC),
+        question=question,
+        area=meta.area_used,
+        area_source=meta.area_source,
+        outcome=report_outcome(
+            meta.outcome, trace.reason, trace.error_code, run.unavailable, len(run.fragments)
+        ),
+        reason=trace.reason,
+        fragments=list(run.fragments),
+        cited=[source.fragment_id for source in meta.sources],
+        practice_used=any(source.kind == "practice" for source in meta.sources),
+        searches=len(run.searches),
+    )
+    started = time.perf_counter()
+    try:
+        await wait_for(sink.record(report), TURN_REPORT_TIMEOUT_S)
+    except Exception as exc:  # аналитика не должна менять уже готовый ответ
+        events.emit(
+            "turn.report",
+            status="error",
+            duration_ms=(time.perf_counter() - started) * 1000,
+            error_code=type(exc).__name__,
+            **ids,
+        )
+        return
+    events.emit(
+        "turn.report",
+        status="ok",
+        duration_ms=(time.perf_counter() - started) * 1000,
+        outcome=report.outcome,
+        **ids,
+    )
+
+
 def _emit_turn(
     trace: TurnTrace,
     result: AIMessage,
@@ -477,6 +572,9 @@ def build_graph(
         finally:
             _TRACE.reset(token)
         _emit_turn(trace, result, identity, config, time.perf_counter() - started)
+        sink = (deps or _runtime_deps()).turn_sink
+        if sink is not None:
+            await _report_turn(sink, trace, result, state, identity, config)
         return {"result": result}
 
     async def finalize(state: State) -> dict[str, object]:

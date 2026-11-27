@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -96,8 +97,9 @@ def search(number: int = 1) -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
+@asynccontextmanager
+async def stand_parts() -> AsyncIterator[tuple[Model, AgentDeps, list[dict[str, Any]]]]:
+    """Подставные модель и knowledge и зависимости агента; граф собирает вызывающий."""
     model = Model()
     lookups: list[dict[str, Any]] = []
 
@@ -142,6 +144,12 @@ async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
             chat,
             KnowledgeClient("http://knowledge", "internal", knowledge_http),
         )
+        yield model, deps, lookups
+
+
+@pytest.fixture
+async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
+    async with stand_parts() as (model, deps, lookups):
         yield model, build_graph(deps, store=InMemoryStore()), lookups
 
 

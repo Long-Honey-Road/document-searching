@@ -192,3 +192,43 @@ class AnswerMeta(_Model):
     area_source: Literal["memory", "question", "asked", "none"]
     sources: list[AnswerSource]
     outcome: Literal["answer", "refusal", "not_found", "ask_area", "fallback"]
+
+
+# --- итог хода для аналитики ОКК (стык B + C, план 28.11) ---
+
+TurnOutcome = Literal[
+    "answered",
+    "empty_search",
+    "unsupported",
+    "ask_area",
+    "refused",
+    "search_unavailable",
+    "model_timeout",
+    "error",
+]
+
+
+class TurnReport(_Model):
+    """Один итог хода по ``run_id``: что спросили, где искали, чем закончилось.
+
+    ``outcome``: ``answered`` — проверенный ответ; ``empty_search`` — поиск ничего не нашёл;
+    ``unsupported`` — материалы нашлись, но ответ не прошёл проверку или выдача слабая;
+    ``ask_area`` — агент уточняет область; ``refused`` — отказ (не по теме, лимит…);
+    ``search_unavailable`` — knowledge не ответил; ``model_timeout`` — таймаут модели;
+    ``error`` — прочие сбои. Ограничения доступа отдельным исходом не различаются:
+    поиск не сообщает, что отфильтровал по правам, и пустая выдача не говорит о закрытых
+    документах. ``question`` — текст вопроса: только в хранилище аналитики, не в журнал."""
+
+    run_id: str
+    thread_id: str | None
+    user_sub: str
+    at: datetime
+    question: str
+    area: str | None
+    area_source: Literal["memory", "question", "asked", "none"]
+    outcome: TurnOutcome
+    reason: str | None
+    fragments: list[str]
+    cited: list[str]
+    practice_used: bool
+    searches: int
