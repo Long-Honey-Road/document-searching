@@ -32,6 +32,126 @@ def write_state(path: Path, state: dict[str, str]) -> None:
     temporary.replace(path)
 
 
+# --- Конфигурация стенда (хотфикс 27.11: web собрался с VITE_API_URL=http://localhost:8080/api) ---
+
+TUNNEL_IMAGE = "cloudflare/cloudflared:2026.10.7"
+_LOCAL_HOSTS = ("localhost", "127.0.0.1")
+_PLACEHOLDERS = ("change-me", "replace-me")
+_LOCAL_URL = re.compile(r"https?://(localhost|127\.0\.0\.1)")
+
+
+def parse_env(text: str) -> dict[str, str]:
+    """Простой разбор .env: KEY=VALUE, комментарии, кавычки, ``export``."""
+    env: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.removeprefix("export ").partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        env[key.strip()] = value
+    return env
+
+
+def _is_local(url: str) -> bool:
+    return (urlsplit(url).hostname or "") in _LOCAL_HOSTS
+
+
+def stand_env_problems(env: dict[str, str]) -> list[str]:
+    """Нарушения конфигурации релиза. Сообщения называют переменную, но не значение."""
+    problems: list[str] = []
+    if "POSTGRES_WORKSPACE" in env:
+        problems.append("POSTGRES_WORKSPACE задан: все уровни доступа сольются в один (D-30)")
+    for key, value in env.items():
+        if any(marker in value for marker in _PLACEHOLDERS):
+            problems.append(f"{key}: осталось значение-заглушка из .env.example")
+    if env.get("ENV") != "stand":
+        return problems
+    base = env.get("PUBLIC_BASE_URL", "")
+    if not base.startswith("https://") or _is_local(base):
+        problems.append("PUBLIC_BASE_URL: нужен публичный https-адрес стенда")
+    issuer = base.rstrip("/") + "/auth/realms/regagent"
+    if env.get("KEYCLOAK_ISSUER") != issuer:
+        problems.append("KEYCLOAK_ISSUER: должен быть PUBLIC_BASE_URL + /auth/realms/regagent")
+    if env.get("VITE_OIDC_AUTHORITY") != env.get("KEYCLOAK_ISSUER"):
+        problems.append("VITE_OIDC_AUTHORITY: должен совпадать с KEYCLOAK_ISSUER")
+    api = env.get("VITE_API_URL", "")
+    if api and not api.startswith("/"):
+        problems.append(
+            "VITE_API_URL: нужен относительный путь (/api), иначе браузер уйдёт не туда"
+        )
+    for key, value in env.items():
+        if key.startswith("VITE_") and any(host in value for host in _LOCAL_HOSTS):
+            problems.append(f"{key}: локальный адрес в сборке web для стенда")
+    return sorted(set(problems))
+
+
+def init_env(source: Path, destination: Path, base: str) -> None:
+    """Первичный .env стенда из исходного; существующий не трогается."""
+    if destination.exists():
+        return
+    issuer = base + "/auth/realms/regagent"
+    overrides = {
+        "ENV": "stand",
+        "PUBLIC_BASE_URL": base,
+        "KEYCLOAK_ISSUER": issuer,
+        "VITE_OIDC_AUTHORITY": issuer,
+        "VITE_API_URL": "/api",
+        "RERANK_MODE": "embeddings",
+        "LIGHTRAG_EXTRACT_GLEANING": "0",
+    }
+    lines = [
+        line
+        for line in source.read_text().splitlines()
+        if line.partition("=")[0].strip() not in overrides
+    ]
+    lines += [f"{key}={value}" for key, value in overrides.items()]
+    destination.write_text("\n".join(lines) + "\n")
+
+
+# Локальный адрес самого стенда (значение по умолчанию из .env.example). Общий поиск
+# localhost не годится: библиотеки в сборке содержат свои http://localhost:3000, :8123 и т.п.
+LOCAL_STAND_URLS = ("http://localhost:8080", "http://127.0.0.1:8080")
+
+
+def web_bundle_problems(*, local_files: str, authority_found: bool, base: str) -> list[str]:
+    """``local_files`` — файлы сборки web с LOCAL_STAND_URLS; ``authority_found`` — есть ли
+    в сборке VITE_OIDC_AUTHORITY из конфигурации релиза (сборка шла с нужным .env)."""
+    if _is_local(base):
+        return []
+    problems = [
+        f"сборка web обращается к локальному адресу стенда: {name}"
+        for name in local_files.splitlines()
+        if name.strip()
+    ]
+    if not authority_found:
+        problems.append("в сборке web нет VITE_OIDC_AUTHORITY из конфигурации релиза")
+    return problems
+
+
+def tunnel_override(cloudflare_env: Path) -> dict[str, object] | None:
+    """Сервис коннектора Cloudflare для релиза, если в cloudflare.env есть токен."""
+    if not cloudflare_env.is_file():
+        return None
+    if not parse_env(cloudflare_env.read_text()).get("TUNNEL_TOKEN", "").startswith("eyJ"):
+        return None
+    return {
+        "services": {
+            "tunnel": {
+                "image": TUNNEL_IMAGE,
+                "profiles": ["tunnel"],
+                "command": ["tunnel", "--no-autoupdate", "run"],
+                "env_file": [str(cloudflare_env)],
+                "restart": "unless-stopped",
+                "depends_on": ["proxy"],
+                "logging": {"options": {"max-size": "10m", "max-file": "3"}},
+            }
+        }
+    }
+
+
 def recover(path: Path, start: Callable[[str], bool], stop: Callable[[], None]) -> None:
     state = read_state(path)
     pending = state.get("pending")
@@ -65,10 +185,10 @@ def activate(
     return False
 
 
-def run(*args: str, cwd: Path, capture: bool = False) -> str:
+def run(*args: str, cwd: Path, capture: bool = False, check: bool = True) -> str:
     log.debug("Выполняю %s %s", args[0], args[1])
     result = subprocess.run(  # noqa: S603
-        args, cwd=cwd, check=True, text=True, stdout=subprocess.PIPE if capture else None
+        args, cwd=cwd, check=check, text=True, stdout=subprocess.PIPE if capture else None
     )
     return result.stdout or ""
 
@@ -108,6 +228,8 @@ class Deployment:
             "-f",
             "storage.json",
         ]
+        if (path / "tunnel.json").exists():
+            command.extend(["-f", "tunnel.json"])
         if locked:
             command.extend(["-f", "images.json"])
         return run(*command, *args, cwd=path, capture=capture)
@@ -116,7 +238,13 @@ class Deployment:
         path = self.releases / release
         path.mkdir(parents=True, exist_ok=True)
         (self.root / "configs").mkdir(exist_ok=True)
-        shutil.copyfile(self.root / ".env", self.root / "configs" / f"{release}.env")
+        config_file = self.root / "configs" / f"{release}.env"
+        shutil.copyfile(self.root / ".env", config_file)
+        problems = stand_env_problems(parse_env(config_file.read_text()))
+        if problems:
+            for problem in problems:
+                log.error("Конфигурация релиза: %s", problem)
+            raise RuntimeError("конфигурация релиза не прошла проверку, см. ошибки выше")
         archive = self.releases / f"{release}.tar"
         run("git", "archive", "--output", str(archive), release, cwd=self.source)
         run("tar", "-xf", str(archive), "-C", str(path), cwd=self.root)
@@ -169,8 +297,16 @@ class Deployment:
                 }
             )
         )
+        tunnel = tunnel_override(self.root / "cloudflare.env")
+        if tunnel is not None:
+            (path / "tunnel.json").write_text(json.dumps(tunnel))
+        else:
+            log.warning("TUNNEL_TOKEN в cloudflare.env не задан: стенд не будет опубликован")
+        profiles = ("--profile", "tunnel") if tunnel is not None else ()
         config = json.loads(
-            self.compose(release, "config", "--format", "json", locked=False, capture=True)
+            self.compose(
+                release, *profiles, "config", "--format", "json", locked=False, capture=True
+            )
         )
         services = config["services"]
         if config.get("name") != "regagent-prod":
@@ -188,6 +324,58 @@ class Deployment:
                 run("docker", "tag", original, tag, cwd=path)
         (path / "images.json").write_text(json.dumps({"services": images}))
         self.compose(release, "build", *build)
+        self.check_web_bundle(release)
+
+    def check_web_bundle(self, release: str) -> None:
+        env = parse_env((self.root / "configs" / f"{release}.env").read_text())
+
+        def files_with(*needles: str) -> str:
+            patterns = [arg for needle in needles for arg in ("-e", needle)]
+            return run(
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "grep",
+                f"regagent-prod/web:{release}",
+                "-rlF",
+                *patterns,
+                "/srv",
+                cwd=self.releases / release,
+                capture=True,
+                check=False,
+            )
+
+        authority = env.get("VITE_OIDC_AUTHORITY", "")
+        problems = web_bundle_problems(
+            local_files=files_with(*LOCAL_STAND_URLS),
+            authority_found=bool(authority) and bool(files_with(authority).strip()),
+            base=env.get("PUBLIC_BASE_URL", ""),
+        )
+        if problems:
+            for problem in problems:
+                log.error("Сборка web: %s", problem)
+            raise RuntimeError("сборка web не соответствует конфигурации релиза")
+
+    def start_tunnel(self, release: str) -> None:
+        """Коннектор Cloudflare не блокирует релиз: сбой туннеля — предупреждение в логе."""
+        if not (self.releases / release / "tunnel.json").exists():
+            return
+        try:
+            self.compose(
+                release,
+                "--profile",
+                "tunnel",
+                "up",
+                "-d",
+                "--no-deps",
+                "--no-build",
+                "--pull",
+                "never",
+                "tunnel",
+            )
+        except subprocess.CalledProcessError:
+            log.warning("Коннектор Cloudflare не запустился, стенд снаружи недоступен")
 
     def probe(self, release: str) -> None:
         config = json.loads(self.compose(release, "config", "--format", "json", capture=True))
@@ -267,6 +455,7 @@ class Deployment:
         for attempt in range(61):
             try:
                 self.probe(release)
+                self.start_tunnel(release)
                 return True
             except (OSError, RuntimeError, ValueError, http.client.HTTPException) as exc:
                 log.info("Проверка %s (%d/61): %s", release, attempt + 1, exc)
@@ -322,6 +511,9 @@ class Deployment:
 
 def main() -> None:
     os.umask(0o077)
+    if sys.argv[1] == "init-env":
+        init_env(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+        return
     root = Path(sys.argv[1]).resolve()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     with (root / "deploy.lock").open("a") as lock:
