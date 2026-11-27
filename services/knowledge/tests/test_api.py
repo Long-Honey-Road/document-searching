@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -507,3 +508,41 @@ def test_admin_retry_reports_broken_manifest_as_conflict(fixture_deps: ApiDeps) 
         response = client.post("/admin/jobs/j-failed/retry", headers=HEADERS)
     assert response.status_code == 409
     assert response.json()["detail"] == "переиндексация требует валидного манифеста"
+
+
+# --- события (C3, D-52) ------------------------------------------------------------
+
+
+def _events(capsys: pytest.CaptureFixture[str], name: str) -> list[dict[str, Any]]:
+    out = capsys.readouterr().out
+    lines = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    return [line for line in lines if line["event"] == name]
+
+
+def test_search_event_records_outcome_without_query(
+    fixture_deps: ApiDeps, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with TestClient(create_app(fixture_deps)) as client:
+        client.post(
+            "/search",
+            json={"query": "секретная формулировка", "levels": ["public"], "top_k": None},
+            headers=HEADERS,
+        )
+    [event] = _events(capsys, "search.request")
+    assert (event["service"], event["status"], event["fragments"]) == ("knowledge", "empty", 0)
+    assert event["levels"] == 1
+    assert "секретная" not in json.dumps(event, ensure_ascii=False)
+
+
+def test_clause_and_refs_events_record_not_found(
+    fixture_deps: ApiDeps, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with TestClient(create_app(fixture_deps)) as client:
+        client.post("/clause", json=CLAUSE, headers=HEADERS)
+        client.post("/refs", json={"doc_id": "absent", "levels": ["public"]}, headers=HEADERS)
+    out = capsys.readouterr().out
+    lines = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    by_event = {line["event"]: line for line in lines}
+    assert by_event["clause.request"]["status"] == "not_found"
+    assert by_event["refs.request"]["status"] == "not_found"
+    assert by_event["refs.request"]["doc_id"] == "absent"

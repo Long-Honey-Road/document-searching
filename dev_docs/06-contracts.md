@@ -1,6 +1,6 @@
 # 06. Контракты
 
-Контракты — общая точка для параллельной работы. Pydantic-модели всех схем ниже живут в пакете `regagent-common` (`packages/common`), сервисы импортируют их оттуда. Любое изменение контракта — вместе с тестом.
+Контракты — общая точка для параллельной работы. Межсервисные Pydantic-модели живут в пакете `regagent-common` (`packages/common`). HTTP-модели ОКК принадлежат backend. Любое изменение контракта — вместе с тестом.
 
 ## knowledge API
 
@@ -47,6 +47,8 @@
 
 Пока служебная часть не готова (старт knowledge), `/admin/*` отвечает 503. `GET /health` — без токена.
 
+Для фрагмента практики `Fragment.practice` содержит `mode` и `binds: [{doc_id, version, clause}]`. У фрагмента регламента поле отсутствует.
+
 ## RabbitMQ
 
 Exchange `regagent` (topic). Все сообщения — JSON с полями `message_id`, `created_at`, `type`.
@@ -54,11 +56,13 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 | Ключ / очередь | Кто пишет | Кто читает | Тело |
 | --- | --- | --- | --- |
 | `index.jobs` | knowledge.watcher, knowledge.reindex | knowledge.consumer | `{job_id, op: "upsert"\|"delete", doc_id, version, path, sha256}`. У `delete` `path` и `sha256` необязательны (D-26). `force` (по умолчанию `false`) — поле `IndexJob` в `regagent_common`: переиндексация ставит `true` у `upsert` (D-45), обработчик тогда не пропускает уже проиндексированный документ. |
-| `practice.publish` | backend (ОКК) | knowledge.consumer | `{practice_id, text, binds: [{doc_id, clause}], mode, areas, verified: {by, at}, source_cluster_id}` |
-| `practice.published` | knowledge | backend | `{practice_id, source_cluster_id, status: "indexed"|"failed", error}` |
-| `qc.events` | knowledge | backend | `{kind: "recheck", reason: "new_version"|"deleted", doc_id, practice_ids: [...]}` |
+| `practice.publish` | backend (ОКК) | knowledge.consumer | `PracticePublish`: `ticket_id, practice_id, revision, text, binds: [{doc_id, version, clause}], mode, approved_by, approved_levels` |
+| ключ `practice.published` → очередь `qc.events` | knowledge | backend | `PracticePublicationResult`: `ticket_id, practice_id, revision, status, error_code`. Успех — `published`, отказ — `failed` с кодом. |
+| `qc.events` | knowledge | backend | `PracticeRecheck`: `kind=recheck, ticket_id, practice_id, revision, doc_id, reason`. Причины: `new_version`, `deleted`, `access_changed`, `content_changed`. Повтор доставки сохраняет тот же `message_id`. |
 
-Очередь ошибок `regagent.dlq`; до 3 повторов с паузой; обработчики идемпотентны.
+Очереди, общие для knowledge и backend, объявляются из `regagent_common.broker` (D-61); модели backend (`qc_models`) повторяют этот контракт с типами UUID, совместимость проверяют `tests/contract`.
+
+Очередь ошибок `index.jobs` и `practice.publish` — `regagent.dlq`. К очереди `qc.events` привязаны ключи `practice.published` и `qc.events`, у неё один активный потребитель и очередь ошибок `qc.events.dlq`. Сообщение несёт `message_id`, UTC `created_at` и `type`, равный ключу маршрутизации; у перепроверки `message_id` детерминирован (`recheck:<practice_id>:<revision>`). `ticket_id` и `practice_id` от backend — UUID. Лимиты команды: до 16 привязок, текст до 12000 символов. `revision` и редакция документа — целые числа от 1. Режим `clarifies` или `overrides`. Backend повторяет отправку того же сообщения до подтверждения брокера. Knowledge публикует результат до событий перепроверки той же новой практики и обеспечивает идемпотентность по `(practice_id, revision)`, подтверждает публикацию после индексации и проверяет все привязки и права. Повторы результатов и событий перепроверки безопасны на стороне backend. Схемой общего протокола и потребителем команды владеет поток A.
 
 ## Ответ агента
 
@@ -74,28 +78,100 @@ web заменяет `[f:...]` на номера `[1]` по `sources`.
 
 Где лежит (D-19): итоговое сообщение — AIMessage из узла `finalize`, `AnswerMeta` — в `additional_kwargs.answer_meta`. `assistant_id` — `regagent`. Публичный стрим доставляет проверенный итог. Вызовы инструментов, результаты поиска и черновик модели остаются во внутреннем запуске (D-35).
 
+## Итог хода для аналитики ОКК (стык B + C)
+
+`regagent_common.contracts.TurnReport` — один на ход с `run_id`. Граф передаёт его вместе с `UserIdentity` в `TurnSink.record(report, identity)` после того, как ответ готов (D-54). Рабочий приёмник — `QcTurnSink`: переводит `TurnReport` в `qc_analytics.TurnOutcome` потока B (вопрос обрезается до 4000 символов, фрагменты — до 500) и вызывает `record_turn`. Соответствие исходов: answered→answer, empty_search, unsupported→insufficient_evidence, ask_area→clarification, refused→refusal, search_unavailable, model_timeout; для `error` в аналитике B нет значения — такой ход виден только в событиях.
+
+| Поле | Что |
+| --- | --- |
+| `run_id`, `thread_id`, `user_sub`, `at` | ход, диалог, пользователь, время UTC |
+| `question` | текст последнего вопроса. Только в хранилище аналитики с учётом прав и срока хранения, в журнал событий не пишется |
+| `area`, `area_source` | область ответа и откуда она (`AnswerMeta`) |
+| `outcome` | `answered`, `empty_search`, `unsupported`, `ask_area`, `refused`, `search_unavailable`, `model_timeout`, `error` |
+| `reason` | код причины, как в `turn.result` |
+| `fragments`, `cited` | id фрагментов, полученных в запуске, и процитированных в ответе |
+| `practice_used` | в ответе процитирована запись практики |
+| `searches` | число поисков |
+
+`unsupported` — материалы нашлись, но ответ не прошёл проверку ссылок или сравнения, либо выдача слабая (`low_confidence`). `search_unavailable` — хотя бы один поиск не дошёл до knowledge и фрагментов нет. Исход «ограничение доступа» не выделяется: поиск не сообщает, что отфильтровал по правам, и пустая выдача не должна говорить о закрытых документах. Команды памяти («запомни / забудь») итога не дают. Повтор одного `run_id` (повторная доставка) приходит с тем же `run_id`: хранилище обязано сводить его к одной записи.
+
 ## Память
 
-Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значение `{kind, value, source, confirmed_at, times_confirmed}`.
+Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значение `{kind, value, source, confirmed_at, times_confirmed}`. Ключ `signals:area` — `{"history": [{run_id, area, at}]}`, последние 20 прямых указаний области (D-55).
 
 ## backend HTTP (свои маршруты)
 
 | Метод | Путь | Роль | Что делает |
 | --- | --- | --- | --- |
-| GET | `/me/memory` | любой | `{"records": [...]}`: свои записи с полем `key` |
-| DELETE | `/me/memory/{key}` | любой | удалить свою запись, `204` также при её отсутствии |
-| GET | `/me/notifications` | любой | уведомления |
-| POST | `/feedback` | любой | `{thread_id, message_id, kind: "contradiction"|"missing", comment}` → элемент ОКК |
-| GET | `/qc/clusters` | qc | очередь |
-| GET | `/qc/clusters/{id}` | qc | кластер с вопросами и черновиком |
-| POST | `/qc/clusters/{id}/draft` | qc | сгенерировать черновик ответа |
-| POST | `/qc/clusters/{id}/publish` | qc | `{text, binds, mode, areas}` |
-| POST | `/qc/clusters/{id}/reject` | qc | закрыть без практики |
+| GET | `/me/memory` | любой | `{"records": [...], "signals": [{area, at}], "progress": {current, current_confirmed_at, days_until_stale, pending_area, pending_count, pending_needed}}`: свои записи с полем `key`, указания области без `run_id` и счёт до записи или смены (D-55) |
+| DELETE | `/me/memory/{key}` | любой | удалить свою запись (`area:<код>`, вместе с её сигналами) или все сигналы (`signals:area`), `204` также при отсутствии |
+| GET | `/qc/me` | вошедший | `{can_review, areas}` |
+| POST | `/qc/tickets` | вошедший | `{submission_id, question, comment?}` → своя заявка; повтор ключа возвращает ту же заявку |
+| GET | `/qc/tickets` | вошедший | свои заявки, статус и время |
+| GET | `/qc/admin/tickets` | admin | очередь с фильтром `status`, `limit`, `offset` |
+| GET | `/qc/admin/tickets/{id}` | admin | детали заявки и история |
+| POST | `/qc/admin/tickets/{id}/publish` | admin | `{text, mode, binds}` → статус `publishing` |
+| POST | `/qc/admin/tickets/{id}/reject` | admin | переход в `rejected` |
+| GET | `/qc/admin/analytics` | admin | `days`, `area`, `outcome`, `ticket_status`, `limit`, `offset` → сводка и группы |
+| POST | `/qc/admin/analytics/{run_id}/ticket` | admin | создать заявку из неотвеченной группы |
 | * | `/admin/*` | admin | прокси служебного API knowledge |
 
-Ошибки — RFC 9457 (`application/problem+json`).
+За пределами доступных уровней заявки и ходы отвечают 404. Недопустимый переход отвечает 409. Валидация выполняется на сервере. `submission_id` в чате совпадает с ID пользовательского сообщения и связующим полем `message_id` аналитики.
+
+Для потока C backend предоставляет внутреннюю функцию `regagent_backend.qc_analytics.record_turn(turn, identity)`. `TurnOutcome` принимает UUID `run_id`, UTC `occurred_at`, `question`, `message_id` (ID сообщения, если есть), `area` (код или null), `fragment_ids`, `used_practice`, `outcome` и `reason` (необязательный машинный код). Исходы: `answer`, `empty_search`, `insufficient_evidence`, `clarification`, `access_limited`, `search_unavailable`, `model_timeout`, `refusal`. `access_limited` передаётся только по подтверждённому сигналу от поиска. На пустой выдаче используется `empty_search`. Функция берёт доступы из серверной `UserIdentity`, при сбое возвращает `false` и пишет техническое событие без текста.
+
+## События сервисов (журнал)
+
+Каждое событие — одна JSON-строка в stdout контейнера, пишет `regagent_common.events.EventLog(<service>)` (D-52). Обычные логи сервиса (LightRAG, uvicorn, Aegra) идут отдельно, события в них не дублируются.
+
+| Поле | Что | Пример |
+| --- | --- | --- |
+| `ts` | время UTC, миллисекунды | `2026-11-28T01:15:42.297Z` |
+| `service` | `backend`, `knowledge`, `deploy` | `backend` |
+| `event` | `<область>.<действие>`, имя из списка ниже | `guard.classify` |
+| `status` | исход, низкокардинальный: `ok`, `error`, `empty`, `rejected`, `timeout` или свой для события | `ok` |
+| `duration_ms` | длительность, целое | `412` |
+| `error_code` | код причины: имя исключения или свой код | `APITimeoutError` |
+| связь | `run_id`, `thread_id`, `request_id`, `job_id`, `doc_id`, `ticket_id`, `practice_id` | `run_id: "…"` |
+| прочее | короткие коды и числа: `area`, `outcome`, `model`, `operation`, `fragments`, `input_tokens`… | |
+
+Метки для агрегации (Loki, Grafana) — только `service`, `event`, `status`; идентификаторы остаются полями.
+
+Ограничения, которые соблюдает код:
+- поля с именами про тексты и секреты (`text`, `query`, `question`, `prompt`, `answer`, `message`, `content`, `comment`, `password`, `secret`, `token`, `api_key`, `authorization`, `cookie`) отбрасываются. Счётчики `input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens` разрешены;
+- отбрасываются строки длиннее 128 символов или с переводом строки, а также значения не из «строка, число, флаг, `null`, список строк»;
+- список длиннее 50 элементов обрезается, полная длина — в `<поле>_total`;
+- имена отброшенных полей пишутся в `dropped_fields`;
+- запись события никогда не бросает исключение.
+
+Каталог событий (новые — по тем же правилам, имя `<область>.<действие>`):
+
+| Событие | Сервис | `status` | Поля |
+| --- | --- | --- | --- |
+| `turn.result` | backend | `ok`, `error` | `outcome`, `reason`, `area`, `area_source`, `searches`, `search_unavailable`, `fragments`, `sources`, `user`, `run_id`, `thread_id` |
+| `guard.classify` | backend | `ok`, `error` | `run_id`, `thread_id` |
+| `answer.generate` | backend | `ok`, `error` | `attempt`, `run_id` |
+| `answer.comparison_check` | backend | `ok`, `rejected`, `error` | `run_id` |
+| `search.tool` | backend | `ok`, `empty`, `unavailable`, `error` | `areas`, `fragments`, `low_confidence`, `areas_diverge`, `run_id` |
+| `refs.tool` | backend | `ok`, `empty`, `not_found`, `unavailable`, `error` | `doc_id`, `outgoing`, `incoming`, `run_id` |
+| `search.request` | knowledge | `ok`, `empty`, `error` | `levels` (число), `areas`, `fragments`, `low_confidence`, `areas_diverge` |
+| `clause.request`, `refs.request` | knowledge | `ok`, `empty` (refs), `not_found`, `rejected`, `error` | `doc_id`, `levels`, `http_status` |
+| `index.step` | knowledge | `ok`, `error` | `step`, `job_id`, `doc_id`, `version`, `attempt` |
+| `index.job` | knowledge | `succeeded`, `retrying`, `failed` | `job_id`, `doc_id`, `version`, `op`, `attempt`, `force` |
+| `memory.area` | backend | `pending`, `remembered`, `confirmed`, `switched`, `duplicate` | `area`, `count`, `needed`, `area_source`, `run_id` |
+| `memory.expired` | backend | `ok` | `areas` — удалённые устаревшие области, `run_id` |
+| `turn.report` | backend | `ok`, `error` | `outcome`, `run_id` — запись итога хода в аналитику ОКК (D-54) |
+| `llm.usage` | backend, knowledge | `ok`, `timeout`, `error` | `operation` (`guard`, `comparison_check`, `answer` в backend; `index`, `keywords`, `embedding` в knowledge), `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens`, `usage_source` (`provider` / `unknown`), `items` (эмбеддинги), `run_id` или `job_id` |
+| `deploy.decision` | deploy | `accepted`, `rejected` | `candidate`, `previous` (SHA) |
+| `deploy.rollback` | deploy | `ok`, `stopped`, `error` | `candidate`, `previous` |
+
+`llm.usage` пишется на каждый физический вызов модели или эмбеддингов (D-53). Токены — только из ответа провайдера; если он их не прислал или вызов упал, `usage_source=unknown` и чисел нет. Ответ из кэша LightRAG модель не вызывает и события не даёт.
+
+`reason` в `turn.result` — код исхода: `practice_not_cited`, `off_topic`, `injection`, `partial_topic`, `too_long`, `no_question`, `rate_limit`, `guard_error`, `memory_stale`, `memory_area_unclear`, `memory_remember`, `memory_forget`, `memory_unavailable`, `areas_diverge`, `empty_search`, `low_confidence`, `generation_error`, `citations_rejected`, `comparison_rejected`, `comparison_check_error`; у проверенного ответа — нет. `not_found` у `/clause` и `/refs` означает «нет документа или нет прав» — как и в ответе, без различия. События backend и knowledge пока связаны только по времени: `run_id` в knowledge не передаётся. События выкатки пишутся в `~/srv/regagent_prod/logs/events.jsonl` хоста, остальные — в stdout контейнеров.
 
 ## Переменные `.env`
+
+Адреса и модели в `CommonSettings` (`LLM_BASE_URL`, `LLM_MODEL`, `EMBEDDINGS_*`, `RERANK_BASE_URL`, `RERANK_MODEL`) обязательны и без значений по умолчанию: пустая переменная считается отсутствующей, сервис падает при старте (D-27). Для `ENV=stand` релиз дополнительно проверяет публичные адреса, `VITE_*` и заглушки (D-38).
 
 | Переменная | Назначение | Пример |
 | --- | --- | --- |
@@ -136,14 +212,13 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `LIGHTRAG_EXTRACT_GLEANING` | повторные проходы извлечения сущностей (каждый удваивает вызовы LLM) | `1` |
 | `LIGHTRAG_LANGUAGE` | язык извлечения сущностей и связей | `Russian` |
 | `LIGHTRAG_EXTRACTION_JSON` | извлечение в JSON, требует поддержки `json_object` на сервере модели | `false` |
-| `AGENT_ESCALATE_AFTER` | после скольких неудач предлагать ОКК | `2` |
 | `AGENT_MAX_STEPS` | предел шагов Deep Agent | `12` |
 | `AGENT_MAX_SEARCHES`, `TOOL_RESULT_MAX_CHARS` | поисков на один ответ; текста фрагментов модели за один поиск, символов (D-24) | `3`, `12000` |
 | `MEMORY_AREA_TTL_DAYS`, `MEMORY_MAX_ACTIVE_AREAS` | память | `14`, `3` |
+| `MEMORY_AREA_SIGNALS_TO_REMEMBER`, `MEMORY_AREA_SIGNALS_TO_SWITCH`, `MEMORY_AREA_SIGNAL_WINDOW_DAYS` | прямых указаний области до записи в пустую память, подряд до смены области, окно учёта в днях (D-55) | `2`, `3`, `14` |
 | `QUESTION_MAX_CHARS`, `RATE_LIMIT_PER_USER_PER_MIN` | лимиты | `2000`, `20` |
-| `QC_CLUSTER_SIMILARITY`, `QC_NOTIFY_TO` | ОКК | `0.85`, `qc@example.org` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | почта | |
-| `AUDIT_RETENTION_DAYS` | срок хранения журнала | `90` |
+| `AUDIT_RETENTION_DAYS` | срок хранения аналитики ОКК, в днях | `90` |
 | `VITE_ASSISTANT_ID` | ID графа или ассистента в Aegra. Пустое значение подходит для стенда с одним ассистентом | |
 | `VITE_API_URL`, `VITE_OIDC_AUTHORITY`, `VITE_OIDC_CLIENT_ID` | web (на этапе сборки) | |
 

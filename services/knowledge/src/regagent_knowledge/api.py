@@ -31,6 +31,7 @@ from regagent_common.contracts import (
 from regagent_common.fragments import FragmentHeader, fragment_id
 from starlette.types import Lifespan
 
+from .events import events
 from .manifest import COMMON_AREA
 from .registry import DocumentRecord, JobRecord
 from .rerank import Reranker
@@ -44,6 +45,7 @@ from .settings import (
 if TYPE_CHECKING:
     from .normalize import Clause
 from .okf import ClauseView, RegulationView
+from .practice import PracticeService
 
 
 class DocumentAccess(Protocol):
@@ -89,6 +91,7 @@ class ApiDeps:
     rerank_candidate_limit: int = DEFAULT_RERANK_CANDIDATE_LIMIT
     rerank_text_max_chars: int = DEFAULT_RERANK_TEXT_MAX_CHARS
     admin: AdminDeps | None = None
+    practices: PracticeService | None = None
 
 
 def _deps(app: FastAPI) -> ApiDeps:
@@ -252,26 +255,51 @@ def create_app(
                 return []
             return view.clauses
 
-        return await search(
-            req,
-            current.rag,
-            current.registry.get,
-            current.reranker,
-            current.min_score,
-            default_top_k=current.search_top_k,
-            registry_snapshot=current.registry.all,
-            indexed_clauses=read_indexed_clauses,
-            rerank_candidate_limit=current.rerank_candidate_limit,
-            rerank_text_max_chars=current.rerank_text_max_chars,
-        )
+        with events.timed("search.request", levels=len(req.levels), areas=req.areas) as event:
+            response = await search(
+                req,
+                current.rag,
+                current.registry.get,
+                current.reranker,
+                current.min_score,
+                default_top_k=current.search_top_k,
+                registry_snapshot=current.registry.all,
+                indexed_clauses=read_indexed_clauses,
+                practice_lookup=current.practices.visible
+                if current.practices is not None
+                else None,
+                rerank_candidate_limit=current.rerank_candidate_limit,
+                rerank_text_max_chars=current.rerank_text_max_chars,
+            )
+            event["status"] = "ok" if response.fragments else "empty"
+            event["fragments"] = len(response.fragments)
+            event["low_confidence"] = response.low_confidence
+            event["areas_diverge"] = response.areas_diverge
+        return response
 
     @app.post("/clause")
     async def clause_route(req: ClauseRequest) -> ClauseResponse:
-        return await _read_clause(req, _deps(app))
+        with events.timed("clause.request", doc_id=req.doc_id, levels=len(req.levels)) as event:
+            try:
+                return await _read_clause(req, _deps(app))
+            except HTTPException as exc:
+                # 404 — нет документа или нет прав, неразличимо (07, слой «утечка через ошибки»)
+                event["status"] = "not_found" if exc.status_code == 404 else "rejected"
+                event["http_status"] = exc.status_code
+                raise
 
     @app.post("/refs")
     async def refs_route(req: RefsRequest) -> RefsResponse:
-        return await _read_refs(req, _deps(app))
+        with events.timed("refs.request", doc_id=req.doc_id, levels=len(req.levels)) as event:
+            try:
+                response = await _read_refs(req, _deps(app))
+            except HTTPException as exc:
+                event["status"] = "not_found" if exc.status_code == 404 else "rejected"
+                event["http_status"] = exc.status_code
+                raise
+            event["outgoing"], event["incoming"] = len(response.outgoing), len(response.incoming)
+            event["status"] = "ok" if response.outgoing or response.incoming else "empty"
+            return response
 
     def _admin() -> tuple[ApiDeps, AdminDeps]:
         current = _deps(app)

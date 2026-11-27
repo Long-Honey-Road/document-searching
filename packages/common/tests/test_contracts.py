@@ -202,3 +202,28 @@ def test_index_job_force_flag_is_part_of_the_contract() -> None:
         plain.model_copy(update={"force": True}).model_dump_json()
     )
     assert forced.force is True
+
+
+def test_turn_report_contract() -> None:
+    from regagent_common.contracts import TurnReport
+
+    report = TurnReport.model_validate(
+        {
+            "run_id": "r-1",
+            "thread_id": "t-1",
+            "user_sub": "u-1",
+            "at": "2026-11-28T01:30:00Z",
+            "question": "Кто назначает РП?",
+            "area": "ДИБ",
+            "area_source": "question",
+            "outcome": "answered",
+            "reason": None,
+            "fragments": ["dib@1#2.7"],
+            "cited": ["dib@1#2.7"],
+            "practice_used": False,
+            "searches": 1,
+        }
+    )
+    assert report.outcome == "answered"
+    with pytest.raises(ValidationError):
+        TurnReport.model_validate({**report.model_dump(), "outcome": "access_denied"})

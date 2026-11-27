@@ -271,3 +271,42 @@ async def test_rerank_uses_relevant_excerpt_but_returns_the_full_clause() -> Non
     assert len(ranker.texts[0]) <= 150
     assert "Координатор назначает" in ranker.texts[0]
     assert response.fragments[0].text.endswith(text)
+
+
+async def test_search_returns_verified_practice_with_its_visible_regulation() -> None:
+    from regagent_common.contracts import PracticeBinding, PracticeSource
+    from regagent_common.fragments import FragmentHeader
+
+    raw = (
+        "⟦practice=p1 doc=example v=1 clause=2.1 mode=overrides area=общий level=public⟧"
+        " Новое правило"
+    )
+    practice = PracticeSource(
+        mode="overrides", binds=[PracticeBinding(doc_id="example", version=1, clause="2.1")]
+    )
+    row = DocumentRecord("example", 1, "hash", "public", ["общий"], "Правила", "indexed", None)
+
+    async def lookup(_: str) -> DocumentRecord:
+        return row
+
+    async def clauses(_: DocumentRecord) -> list[Clause]:
+        return split_clauses("2.1. Базовое правило.")
+
+    async def verify(_: FragmentHeader, chunk_text: str) -> PracticeSource | None:
+        return practice if chunk_text == raw else None
+
+    result = await search(
+        SearchRequest(query="правило", levels=["public"], top_k=2),
+        FakeRag([raw, raw + " подмена"]),
+        lookup,
+        FakeReranker(),
+        0.2,
+        indexed_clauses=clauses,
+        practice_lookup=verify,
+    )
+    assert [fragment.fragment_id for fragment in result.fragments] == [
+        "practice:p1",
+        "example@1#2.1",
+    ]
+    assert result.fragments[0].practice == practice
+    assert result.fragments[1].practice is None

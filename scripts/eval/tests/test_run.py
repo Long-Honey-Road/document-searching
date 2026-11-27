@@ -120,6 +120,7 @@ async def test_stops_at_leak_before_asking_next_question(config, corpus, calls, 
 
 @pytest.mark.asyncio
 async def test_run_writes_both_artifacts(config, corpus, calls, tmp_path, monkeypatch):
+    monkeypatch.setattr(run, "_git_sha", lambda: "a" * 40)
     monkeypatch.setattr(run, "read_config", lambda *_: config)
     monkeypatch.setattr(run, "check_health", AsyncMock())
     monkeypatch.setattr(run, "account_levels", lambda *_: (None, None))
@@ -139,7 +140,9 @@ async def test_run_writes_both_artifacts(config, corpus, calls, tmp_path, monkey
     [raw] = list((tmp_path / "raw").glob("*.jsonl"))
     assert raw.stem == report.stem
     assert "1 из 1" in report.read_text()
-    assert [json.loads(line)["type"] for line in raw.read_text().splitlines()] == ["run", "case"]
+    header, case = [json.loads(line) for line in raw.read_text().splitlines()]
+    assert header["type"] == "run" and header["sha"] == "a" * 40
+    assert case["type"] == "case"
 
 
 def test_remote_address_in_env_is_not_used_by_default(tmp_path):

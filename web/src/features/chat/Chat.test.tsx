@@ -66,3 +66,23 @@ test('empty thread list is not an error', async () => {
   expect(await screen.findByText('Задайте вопрос по регламентам.')).toBeInTheDocument()
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
+
+test('memory panel opens on demand and loads the account memory', async () => {
+  api.assistants.mockResolvedValue([{ assistant_id: 'regagent' }])
+  api.threads.mockResolvedValue([])
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    records: [], signals: [],
+    progress: { current: null, current_confirmed_at: null, days_until_stale: null,
+      pending_area: null, pending_count: 0, pending_needed: 0 },
+  }), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    render(<Chat token="t" onUnauthorized={vi.fn()} />)
+    expect(fetchMock).not.toHaveBeenCalled()
+    screen.getByRole('button', { name: 'Память' }).click()
+    expect(await screen.findByText(/Области в памяти нет/)).toBeInTheDocument()
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/api\/me\/memory$/)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})

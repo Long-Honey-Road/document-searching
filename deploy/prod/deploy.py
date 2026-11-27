@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -351,6 +352,28 @@ def check_signed_in(
         raise RuntimeError(f"после входа ассистентов {found}, нужен ровно один")
 
 
+def emit_event(root: Path, event: str, status: str, **fields: object) -> None:
+    """Событие выкатки (D-52) в ``logs/events.jsonl``: одна JSON-строка, только SHA, коды и
+    числа. Формат — как у ``regagent_common.events``: deploy.py работает на системном
+    python3 без пакетов проекта. Сбой записи не мешает выкатке."""
+    line = {
+        # datetime.UTC — только с 3.11, а deploy.py работает на системном python3 3.9
+        "ts": datetime.now(timezone.utc)  # noqa: UP017
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z"),
+        "service": "deploy",
+        "event": event,
+        "status": status,
+        **{key: value for key, value in fields.items() if value is not None},
+    }
+    try:
+        (root / "logs").mkdir(parents=True, exist_ok=True)
+        with (root / "logs" / "events.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except OSError as exc:
+        log.warning("Не удалось записать событие выкатки: %s", type(exc).__name__)
+
+
 def recover(path: Path, start: Callable[[str], bool], stop: Callable[[], None]) -> None:
     state = read_state(path)
     pending = state.get("pending")
@@ -358,12 +381,22 @@ def recover(path: Path, start: Callable[[str], bool], stop: Callable[[], None]) 
         return
     good = state.get("good")
     log.warning("Откат %s → %s", pending, good or "нет принятой версии")
+    started = time.monotonic()
     if good:
         if not start(good):
+            emit_event(path.parent, "deploy.rollback", "error", candidate=pending, previous=good)
             raise RuntimeError(f"откат на {good} не прошёл проверку")
     else:
         stop()
     write_state(path, {**({"good": good} if good else {}), "rejected": pending})
+    emit_event(
+        path.parent,
+        "deploy.rollback",
+        "ok" if good else "stopped",
+        duration_ms=round((time.monotonic() - started) * 1000),
+        candidate=pending,
+        previous=good,
+    )
 
 
 def activate(
@@ -371,15 +404,26 @@ def activate(
 ) -> bool:
     state = read_state(path)
     write_state(path, {**state, "pending": candidate})
+    started = time.monotonic()
+    error_code = None
     try:
         passed = start(candidate)
-    except Exception:
+    except Exception as exc:
         log.exception("Ошибка запуска кандидата %s", candidate)
+        error_code = type(exc).__name__
         passed = False
+    decision = {
+        "duration_ms": round((time.monotonic() - started) * 1000),
+        "candidate": candidate,
+        "previous": state.get("good"),
+        "error_code": error_code,
+    }
     if passed:
         write_state(path, {"good": candidate})
         log.info("Принят %s", candidate)
+        emit_event(path.parent, "deploy.decision", "accepted", **decision)
         return True
+    emit_event(path.parent, "deploy.decision", "rejected", **decision)
     recover(path, start, stop)
     return False
 
