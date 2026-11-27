@@ -13,9 +13,12 @@ data/*
 !data/okf/
 data/docs/*
 data/okf/*
+!data/demo_corpus/
+!data/demo_corpus/*
 !data/docs/.gitkeep
 !data/okf/.gitkeep
 *.docx
+!data/demo_corpus/*.docx
 *.pdf
 !eval/**/*.pdf
 

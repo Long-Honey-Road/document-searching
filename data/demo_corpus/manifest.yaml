@@ -1,0 +1,205 @@
+areas:
+- code: ДИБ
+  title: Дирекция информационной безопасности
+  synonyms:
+  - Дирекция ИБ
+- code: ДБРЦТ
+  title: Департамент бизнес-решений и цифровой трансформации
+  synonyms: []
+- code: общий
+  title: Общие регламенты
+  synonyms:
+  - общий порядок
+documents:
+- file: dbrct-project-activity.docx
+  doc_id: dbrct-project-activity
+  title: Проектная деятельность ДБРЦТ (Департамента бизнес-решений и цифровой трансформации)
+  areas:
+  - ДБРЦТ
+  access: public
+  version: 1
+  effective_from: &id001 2026-11-27
+- file: dib-presale-activity.docx
+  doc_id: dib-presale-activity
+  title: Пресейловая деятельность Дирекции ИБ
+  areas:
+  - ДИБ
+  access: public
+  version: 1
+  effective_from: *id001
+- file: dib-project-activity.docx
+  doc_id: dib-project-activity
+  title: Проектная деятельность Дирекции ИБ
+  areas:
+  - ДИБ
+  access: public
+  version: 1
+  effective_from: *id001
+- file: project-activity-organization.docx
+  doc_id: project-activity-organization
+  title: Организация проектной деятельности
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: subcontractor-selection.docx
+  doc_id: subcontractor-selection
+  title: Регламент подбора субподрядчика
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: deal-margin-control-v1.docx
+  doc_id: deal-margin-control
+  title: Регламент контроля маржинальности сделок
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: finance-documents.docx
+  doc_id: finance-documents
+  title: Регламент архивирования финансовых заключений
+  areas:
+  - общий
+  access: closed_fin
+  version: 1
+  effective_from: *id001
+- file: it-request-handling.docx
+  doc_id: it-request-handling
+  title: Регламент обработки обращений сотрудников в службу ИТ
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: account-access-management.docx
+  doc_id: account-access-management
+  title: Регламент управления учетными записями и правами доступа
+  areas:
+  - ДИБ
+  access: public
+  version: 1
+  effective_from: *id001
+- file: equipment-inventory.docx
+  doc_id: equipment-inventory
+  title: Регламент инвентаризации оборудования
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: backup-restore.docx
+  doc_id: backup-restore
+  title: Регламент резервного копирования и восстановления данных
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: incident-response.docx
+  doc_id: incident-response
+  title: Регламент реагирования на инциденты информационной безопасности
+  areas:
+  - ДИБ
+  access: public
+  version: 1
+  effective_from: *id001
+- file: security-awareness-training.docx
+  doc_id: security-awareness-training
+  title: Регламент обучения сотрудников информационной безопасности
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: remote-work-approval.docx
+  doc_id: remote-work-approval
+  title: Регламент согласования удаленной работы
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: new-employee-onboarding.docx
+  doc_id: new-employee-onboarding
+  title: Регламент адаптации нового сотрудника
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: paper-records-retention.docx
+  doc_id: paper-records-retention
+  title: Регламент хранения и уничтожения бумажных документов
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: office-equipment-procurement.docx
+  doc_id: office-equipment-procurement
+  title: Регламент закупки офисного оборудования
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: client-inquiry-handling.docx
+  doc_id: client-inquiry-handling
+  title: Регламент приёма и обработки обращений клиентов
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: internal-it-change-management.docx
+  doc_id: internal-it-change-management
+  title: Регламент управления изменениями внутренних ИТ-систем
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: knowledge-management.docx
+  doc_id: knowledge-management
+  title: Регламент управления корпоративными знаниями
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: internal-services-quality.docx
+  doc_id: internal-services-quality
+  title: Регламент контроля качества внутренних сервисов
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: internal-audit.docx
+  doc_id: internal-audit
+  title: Регламент проведения внутреннего аудита
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: license-return.docx
+  doc_id: license-return
+  title: Регламент возврата программных лицензий
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
+- file: license-key-delivery.docx
+  doc_id: license-key-delivery
+  title: Регламент разбора неполученного лицензионного ключа после оплаты
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001

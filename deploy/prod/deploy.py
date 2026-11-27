@@ -512,8 +512,8 @@ class Deployment:
                 "run",
                 "--no-sync",
                 "python",
-                "scripts/synth/generate.py",
-                "--docs-dir",
+                "scripts/synth/sync_corpus.py",
+                "--target",
                 str(data / "docs"),
                 cwd=path,
             )
