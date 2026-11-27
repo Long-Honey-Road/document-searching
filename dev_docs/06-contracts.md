@@ -119,6 +119,8 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `WATCH_DEBOUNCE_S`, `INDEX_MAX_RETRIES` | индексация | `3`, `3` |
 | `CHUNK_MAX_TOKENS` | максимум токенов во фрагменте | `1200` |
 | `SEARCH_TOP_K`, `SEARCH_MODE` | поиск LightRAG | `8`, `mix` |
+| `LIGHTRAG_WORKING_DIR` | рабочий каталог LightRAG (якорь конфигурации хранилищ); на стенде — постоянный том | `/data/lightrag` |
+| `LIGHTRAG_EXTRACT_GLEANING` | повторные проходы извлечения сущностей (каждый удваивает вызовы LLM) | `1` |
 | `AGENT_ESCALATE_AFTER` | после скольких неудач предлагать ОКК | `2` |
 | `AGENT_MAX_STEPS` | предел шагов Deep Agent | `12` |
 | `MEMORY_AREA_TTL_DAYS`, `MEMORY_MAX_ACTIVE_AREAS` | память | `14`, `3` |
