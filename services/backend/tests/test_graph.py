@@ -12,6 +12,7 @@ from pydantic import SecretStr
 from regagent_backend.graph import AgentDeps, build_graph
 from regagent_backend.knowledge_client import KnowledgeClient
 from regagent_backend.settings import BackendSettings
+from regagent_backend.usage import UsageCallback
 from regagent_common.contracts import AnswerMeta, Fragment, SearchResponse
 
 CONFIG: RunnableConfig = {
@@ -133,6 +134,7 @@ async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
             api_key=SecretStr("fake"),
             http_async_client=transport,
             disable_streaming=True,
+            callbacks=[UsageCallback("agent")],
         )
         deps = AgentDeps(
             settings,

@@ -63,7 +63,15 @@ async def test_turn_result_for_answer_counts_searches_and_sources(
     await graph.ainvoke(
         {"messages": [("human", "Кто назначает РП в ДИБ?")]}, config=_with_run(GRAPH_CONFIG)
     )
-    [turn] = events(capsys, "turn.result")
+    out = capsys.readouterr().out
+    lines = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    [turn] = [line for line in lines if line["event"] == "turn.result"]
+    usage = [line for line in lines if line["event"] == "llm.usage"]
+    # Один ход — два физических вызова: guard и ответ внутри Deep Agent
+    assert [(u["operation"], u["run_id"]) for u in usage] == [
+        ("guard", "run-1"),
+        ("answer", "run-1"),
+    ]
     assert (turn["outcome"], turn["area"], turn["area_source"]) == ("answer", "ДИБ", "question")
     assert (turn["searches"], turn["fragments"], turn["sources"]) == (1, 1, 1)
     assert turn["search_unavailable"] == 0
