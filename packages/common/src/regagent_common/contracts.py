@@ -255,12 +255,17 @@ class AnswerSource(_Model):
     kind: FragmentKind
 
 
+AnswerOutcome = Literal[
+    "answer", "refusal", "not_found", "ask_area", "ask_clarification", "qc_help", "fallback"
+]
+
+
 class AnswerMeta(_Model):
     verified: bool
     area_used: str | None
     area_source: Literal["memory", "question", "asked", "none"]
     sources: list[AnswerSource]
-    outcome: Literal["answer", "refusal", "not_found", "ask_area", "fallback"]
+    outcome: AnswerOutcome
 
 
 # --- итог хода для аналитики ОКК (стык B + C, план 28.11) ---
@@ -270,6 +275,7 @@ TurnOutcome = Literal[
     "empty_search",
     "unsupported",
     "ask_area",
+    "ask_clarification",
     "refused",
     "search_unavailable",
     "model_timeout",

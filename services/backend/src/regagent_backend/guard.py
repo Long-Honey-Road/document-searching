@@ -25,6 +25,9 @@ class GuardResult(BaseModel):
     explicit_areas: list[str]
     search_queries: list[str]
     memory_action: Literal["none", "remember", "forget"]
+    qc_action: Literal["none", "draft", "guide"]
+    missing_detail: str | None
+    area_only: bool
 
 
 async def invoke_structured[T: BaseModel](
@@ -70,12 +73,19 @@ async def classify(
     awaiting_area: bool,
     mode: StructuredMode,
     run: dict[str, str] | None = None,
+    *,
+    awaiting_detail: bool = False,
 ) -> GuardResult:
     return await invoke_structured(
         model,
         GuardResult,
         mode,
         (PROMPTS / "guard.md").read_text(encoding="utf-8"),
-        {"области": area_codes, "ждём уточнения области": awaiting_area, "сообщения": questions},
+        {
+            "области": area_codes,
+            "ждём уточнения области": awaiting_area,
+            "ждём уточнения условия": awaiting_detail,
+            "сообщения": questions,
+        },
         {"llm_operation": "guard", **(run or {})},
     )

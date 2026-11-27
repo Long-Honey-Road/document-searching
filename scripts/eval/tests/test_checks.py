@@ -101,3 +101,26 @@ def test_new_dialog_checks_whether_area_came_from_memory(question, corpus):
     for source, expected in [("memory", True), ("question", False)]:
         answer = timed("Текст", metadata(area_source=source), 1, 2)
         assert evaluate(question, answer, corpus).area is expected
+
+
+def test_qc_guidance_requires_action_and_rejects_false_submission_and_sources(question, corpus):
+    case = question.model_copy(
+        update={
+            "outcome": "qc_help",
+            "expected_clauses": [],
+            "expect_no_sources": True,
+            "required_phrases": ["Передать в ОКК", "подтвердите отправку"],
+            "forbidden_phrases": ["заявка отправлена"],
+        }
+    )
+    good = timed(
+        "Откройте «Передать в ОКК» и подтвердите отправку.",
+        metadata(outcome="qc_help", sources=[]),
+        1,
+        2,
+    )
+    assert evaluate(case, good, corpus).passed
+    bad = timed("Заявка отправлена. [f:public-doc@1#1.2]", metadata(outcome="qc_help"), 1, 2)
+    result = evaluate(case, bad, corpus)
+    assert not result.passed and not result.behavior
+    assert len(result.behavior_issues) == 4

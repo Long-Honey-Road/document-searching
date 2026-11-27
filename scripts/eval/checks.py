@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from math import isfinite
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from scripts.eval.questions import Corpus, Question
 
@@ -19,6 +20,7 @@ class TimedAnswer(BaseModel):
     meta: dict[str, Any]
     first_words_s: float | None
     total_s: float | None
+    run_id: UUID | None = None
 
 
 class Checks(BaseModel):
@@ -30,6 +32,11 @@ class Checks(BaseModel):
     missing_clauses: list[str]
     leaks: list[str]
     unverifiable_sources: list[str]
+    behavior_issues: list[str] = Field(default_factory=list)
+
+    @property
+    def behavior(self) -> bool:
+        return not self.behavior_issues
 
     @property
     def passed(self) -> bool:
@@ -39,6 +46,7 @@ class Checks(BaseModel):
             and self.verified
             and self.area
             and self.timings
+            and self.behavior
             and not self.leaks
             and not self.unverifiable_sources
         )
@@ -57,6 +65,20 @@ def _source_ids(answer: TimedAnswer) -> tuple[dict[str, str], list[str]]:
         clause = source.get("clause")
         found[source["fragment_id"]] = clause if isinstance(clause, str) else ""
     return found, malformed
+
+
+def _behavior_issues(question: Question, answer: TimedAnswer, has_sources: bool) -> list[str]:
+    text = " ".join(answer.text.casefold().split()).replace("ё", "е")
+    issues = []
+    for phrase in question.required_phrases:
+        if " ".join(phrase.casefold().split()).replace("ё", "е") not in text:
+            issues.append(f"Нет фразы «{phrase}»")
+    for phrase in question.forbidden_phrases:
+        if " ".join(phrase.casefold().split()).replace("ё", "е") in text:
+            issues.append(f"Недопустимая фраза «{phrase}»")
+    if question.expect_no_sources and has_sources:
+        issues.append("Получены источники у ответа, для которого они не ожидались")
+    return issues
 
 
 def evaluate(question: Question, answer: TimedAnswer, corpus: Corpus) -> Checks:
@@ -100,4 +122,5 @@ def evaluate(question: Question, answer: TimedAnswer, corpus: Corpus) -> Checks:
         missing_clauses=missing,
         leaks=leaks,
         unverifiable_sources=unverifiable,
+        behavior_issues=_behavior_issues(question, answer, bool(sources or inline)),
     )

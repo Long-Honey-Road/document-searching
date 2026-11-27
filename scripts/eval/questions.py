@@ -8,13 +8,23 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
 from regagent_common.access import AccessLevels
+from regagent_common.contracts import AnswerOutcome
 from regagent_knowledge.manifest import load_manifest
 
 Account = Literal["employee_public", "employee_fin"]
-Outcome = Literal["answer", "refusal", "not_found", "ask_area", "fallback"]
-Category = Literal["simple", "multi_doc", "area", "closed", "not_found", "refusal", "revision"]
+Category = Literal[
+    "simple",
+    "multi_doc",
+    "area",
+    "closed",
+    "not_found",
+    "refusal",
+    "revision",
+    "clarification",
+    "qc",
+]
 Nonempty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
 
@@ -25,7 +35,7 @@ class Question(BaseModel):
     id: Identifier
     user: Account
     question: Nonempty
-    outcome: Outcome
+    outcome: AnswerOutcome
     areas: list[str]
     expected_clauses: list[str]
     reference_answer: Nonempty
@@ -33,6 +43,9 @@ class Question(BaseModel):
     scenario: Identifier | None = None
     new_thread: bool = False
     reset_memory: bool = False
+    expect_no_sources: bool = False
+    required_phrases: list[Nonempty] = Field(default_factory=list)
+    forbidden_phrases: list[Nonempty] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -112,6 +125,8 @@ def load_questions(path: Path, corpus: Corpus) -> list[Question]:
         if question.id in ids:
             raise ValueError(f"{question.id}: повторяющийся id")
         ids.add(question.id)
+        if question.expect_no_sources and question.expected_clauses:
+            raise ValueError(f"{question.id}: ответ без источников не может ожидать ссылки")
         if question.new_thread and not question.scenario:
             raise ValueError(f"{question.id}: new_thread требует scenario")
         if question.scenario:

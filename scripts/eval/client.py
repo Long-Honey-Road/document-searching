@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass, field
 from time import monotonic, time
 from typing import Any, cast
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import jwt
@@ -20,7 +21,9 @@ from scripts.eval.questions import Account
 
 
 class StandError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, run_id: UUID | None = None) -> None:
+        super().__init__(message)
+        self.run_id = run_id
 
 
 @dataclass
@@ -30,10 +33,16 @@ class Turn:
     text: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
     first_words_s: float | None = None
+    run_id: UUID | None = None
 
     def add(self, event: str, data: Any) -> None:
         if event == "error":
-            raise StandError("Стенд сообщил об ошибке выполнения запроса")
+            raise StandError("Стенд сообщил об ошибке выполнения запроса", run_id=self.run_id)
+        if event == "metadata" and isinstance(data, dict) and self.run_id is None:
+            candidate = data.get("run_id")
+            if isinstance(candidate, str):
+                with suppress(ValueError):
+                    self.run_id = UUID(candidate)
         if event != "values" or not isinstance(data, dict):
             return
         messages = data.get("messages", [])
@@ -155,12 +164,13 @@ class StandSession:
                 ):
                     turn.add(chunk.event, chunk.data)
         except TimeoutError:
-            raise StandError(f"Ответ не завершился за {deadline:g} с") from None
+            raise StandError(f"Ответ не завершился за {deadline:g} с", run_id=turn.run_id) from None
         return TimedAnswer(
             text=turn.text,
             meta=turn.meta,
             first_words_s=turn.first_words_s,
             total_s=monotonic() - turn.start,
+            run_id=turn.run_id,
         )
 
 

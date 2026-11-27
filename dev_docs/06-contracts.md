@@ -71,29 +71,31 @@ Exchange `regagent` (topic). Все сообщения — JSON с полями 
 ```json
 {"verified": true, "area_used": "ДИБ", "area_source": "memory|question|asked|none",
  "sources": [{"n": 1, "fragment_id": "...", "title": "...", "clause": "2.7", "version": 3, "kind": "regulation"}],
- "outcome": "answer|refusal|not_found|ask_area|fallback"}
+ "outcome": "answer|refusal|not_found|ask_area|ask_clarification|qc_help|fallback"}
 ```
 
 web заменяет `[f:...]` на номера `[1]` по `sources`.
 
 Где лежит (D-19): итоговое сообщение — AIMessage из узла `finalize`, `AnswerMeta` — в `additional_kwargs.answer_meta`. `assistant_id` — `regagent`. Публичный стрим доставляет проверенный итог. Вызовы инструментов, результаты поиска и черновик модели остаются во внутреннем запуске (D-35).
 
+В публичном стриме событие `metadata` содержит `run_id`. Прогон качества сохраняет его вместе с ответом или ошибкой, если сервер успел передать идентификатор. По нему ищутся события `turn.result` и отдельные этапы внутри backend. У `ask_area`, `ask_clarification` и `qc_help` поле `sources` пустое. Флаг `areas_diverge` в результатах поиска совместим с исходом `not_found`, если выдача не подтверждает ответ на вопрос (D-62…D-64).
+
 ## Итог хода для аналитики ОКК (стык B + C)
 
-`regagent_common.contracts.TurnReport` — один на ход с `run_id`. Граф передаёт его вместе с `UserIdentity` в `TurnSink.record(report, identity)` после того, как ответ готов (D-54). Рабочий приёмник — `QcTurnSink`: переводит `TurnReport` в `qc_analytics.TurnOutcome` потока B (вопрос обрезается до 4000 символов, фрагменты — до 500) и вызывает `record_turn`. Соответствие исходов: answered→answer, empty_search, unsupported→insufficient_evidence, ask_area→clarification, refused→refusal, search_unavailable, model_timeout; для `error` в аналитике B нет значения — такой ход виден только в событиях.
+`regagent_common.contracts.TurnReport` — один на ход с `run_id`. Граф передаёт его вместе с `UserIdentity` в `TurnSink.record(report, identity)` после того, как ответ готов (D-54). Рабочий приёмник — `QcTurnSink`: переводит `TurnReport` в `qc_analytics.TurnOutcome` потока B (вопрос обрезается до 4000 символов, фрагменты — до 500) и вызывает `record_turn`. Соответствие исходов: answered→answer, empty_search, unsupported→insufficient_evidence, ask_area и ask_clarification→clarification, refused→refusal, search_unavailable, model_timeout; `error` сохраняется в аналитике как `error`.
 
 | Поле | Что |
 | --- | --- |
 | `run_id`, `thread_id`, `user_sub`, `at` | ход, диалог, пользователь, время UTC |
 | `question` | текст последнего вопроса. Только в хранилище аналитики с учётом прав и срока хранения, в журнал событий не пишется |
 | `area`, `area_source` | область ответа и откуда она (`AnswerMeta`) |
-| `outcome` | `answered`, `empty_search`, `unsupported`, `ask_area`, `refused`, `search_unavailable`, `model_timeout`, `error` |
+| `outcome` | `answered`, `empty_search`, `unsupported`, `ask_area`, `ask_clarification`, `refused`, `search_unavailable`, `model_timeout`, `error` |
 | `reason` | код причины, как в `turn.result` |
 | `fragments`, `cited` | id фрагментов, полученных в запуске, и процитированных в ответе |
 | `practice_used` | в ответе процитирована запись практики |
 | `searches` | число поисков |
 
-`unsupported` — материалы нашлись, но ответ не прошёл проверку ссылок или сравнения, либо выдача слабая (`low_confidence`). `search_unavailable` — хотя бы один поиск не дошёл до knowledge и фрагментов нет. Исход «ограничение доступа» не выделяется: поиск не сообщает, что отфильтровал по правам, и пустая выдача не должна говорить о закрытых документах. Команды памяти («запомни / забудь») итога не дают. Повтор одного `run_id` (повторная доставка) приходит с тем же `run_id`: хранилище обязано сводить его к одной записи.
+`unsupported` — материалы нашлись, но ответ не прошёл проверку ссылок или сравнения, выдача слабая или найденные пункты не подтверждают ответ (`no_regulation_support`). `search_unavailable` — хотя бы один поиск не дошёл до knowledge и фрагментов нет. Исход «ограничение доступа» не выделяется: поиск не сообщает, что отфильтровал по правам, и пустая выдача не должна говорить о закрытых документах. Команды памяти («запомни / забудь»), инструкции и черновики ОКК (`qc_help`) исключаются из аналитики вопросов. Повтор одного `run_id` (повторная доставка) приходит с тем же `run_id`: хранилище обязано сводить его к одной записи.
 
 ## Память
 
@@ -151,6 +153,7 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `turn.result` | backend | `ok`, `error` | `outcome`, `reason`, `area`, `area_source`, `searches`, `search_unavailable`, `fragments`, `sources`, `user`, `run_id`, `thread_id` |
 | `guard.classify` | backend | `ok`, `error` | `run_id`, `thread_id` |
 | `answer.generate` | backend | `ok`, `error` | `attempt`, `run_id` |
+| `answer.evidence_check` | backend | `ok`, `rejected`, `error` | `run_id` |
 | `answer.comparison_check` | backend | `ok`, `rejected`, `error` | `run_id` |
 | `search.tool` | backend | `ok`, `empty`, `unavailable`, `error` | `areas`, `fragments`, `low_confidence`, `areas_diverge`, `run_id` |
 | `refs.tool` | backend | `ok`, `empty`, `not_found`, `unavailable`, `error` | `doc_id`, `outgoing`, `incoming`, `run_id` |
@@ -161,13 +164,13 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 | `memory.area` | backend | `pending`, `remembered`, `confirmed`, `switched`, `duplicate` | `area`, `count`, `needed`, `area_source`, `run_id` |
 | `memory.expired` | backend | `ok` | `areas` — удалённые устаревшие области, `run_id` |
 | `turn.report` | backend | `ok`, `error` | `outcome`, `run_id` — запись итога хода в аналитику ОКК (D-54) |
-| `llm.usage` | backend, knowledge | `ok`, `timeout`, `error` | `operation` (`guard`, `comparison_check`, `answer` в backend; `index`, `keywords`, `embedding` в knowledge), `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens`, `usage_source` (`provider` / `unknown`), `items` (эмбеддинги), `run_id` или `job_id` |
+| `llm.usage` | backend, knowledge | `ok`, `timeout`, `error` | `operation` (`guard`, `comparison_check`, `evidence_check`, `answer` в backend; `index`, `keywords`, `embedding` в knowledge), `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens`, `usage_source` (`provider` / `unknown`), `items` (эмбеддинги), `run_id` или `job_id` |
 | `deploy.decision` | deploy | `accepted`, `rejected` | `candidate`, `previous` (SHA) |
 | `deploy.rollback` | deploy | `ok`, `stopped`, `error` | `candidate`, `previous` |
 
 `llm.usage` пишется на каждый физический вызов модели или эмбеддингов (D-53). Токены — только из ответа провайдера; если он их не прислал или вызов упал, `usage_source=unknown` и чисел нет. Ответ из кэша LightRAG модель не вызывает и события не даёт.
 
-`reason` в `turn.result` — код исхода: `practice_not_cited`, `off_topic`, `injection`, `partial_topic`, `too_long`, `no_question`, `rate_limit`, `guard_error`, `memory_stale`, `memory_area_unclear`, `memory_remember`, `memory_forget`, `memory_unavailable`, `areas_diverge`, `empty_search`, `low_confidence`, `generation_error`, `citations_rejected`, `comparison_rejected`, `comparison_check_error`; у проверенного ответа — нет. `not_found` у `/clause` и `/refs` означает «нет документа или нет прав» — как и в ответе, без различия. События backend и knowledge пока связаны только по времени: `run_id` в knowledge не передаётся. События выкатки пишутся в `~/srv/regagent_prod/logs/events.jsonl` хоста, остальные — в stdout контейнеров.
+`reason` в `turn.result` — код исхода: `practice_not_cited`, `off_topic`, `injection`, `partial_topic`, `too_long`, `no_question`, `rate_limit`, `guard_error`, `memory_stale`, `memory_area_unclear`, `memory_remember`, `memory_forget`, `memory_unavailable`, `areas_diverge`, `area_needed`, `missing_detail`, `empty_search`, `no_regulation_support`, `search_unavailable`, `qc_draft`, `qc_guide`, `generation_error`, `citations_rejected`, `comparison_rejected`, `comparison_check_error`, `evidence_check_error`; у проверенного ответа — нет. `not_found` у `/clause` и `/refs` означает «нет документа или нет прав» — как и в ответе, без различия. События backend и knowledge пока связаны только по времени: `run_id` в knowledge не передаётся. События выкатки пишутся в `~/srv/regagent_prod/logs/events.jsonl` хоста, остальные — в stdout контейнеров.
 
 ## Переменные `.env`
 

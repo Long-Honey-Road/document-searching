@@ -1,0 +1,176 @@
+- id: direct-project-role
+  user: employee_public
+  category: simple
+  reset_memory: true
+  question: Кто в ДИБ назначает руководителя проекта при полном итоговом расчёте и какой у него срок?
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: [dib-project-activity#2.7]
+  required_phrases: [координатор]
+  reference_answer: Координатор департамента назначает РП в течение одного рабочего дня.
+
+- id: paraphrase-project-role
+  user: employee_public
+  category: simple
+  reset_memory: true
+  question: ИБ. Итоговый расчёт проекта уже полный и готов. Кто закрепит за проектом РП и сколько рабочих дней ему на это отводится?
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: [dib-project-activity#2.7]
+  required_phrases: [координатор]
+  reference_answer: Те же исполнитель и срок, что в п. 2.7, при разговорной формулировке.
+
+- id: two-documents
+  user: employee_public
+  category: multi_doc
+  reset_memory: true
+  question: Кто в ДИБ запрашивает спецификацию на ПО и оборудование на пресейле, а кто потом назначает РП после уведомления из CRM?
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: [dib-presale-activity#2.4, dib-project-activity#2.1]
+  reference_answer: На пресейле спецификацию запрашивает менеджер по продаже решений. РП назначает координатор департамента.
+
+- id: ask-which-area
+  user: employee_public
+  category: area
+  scenario: project-area
+  reset_memory: true
+  question: Кто назначает руководителя проекта?
+  areas: []
+  outcome: ask_area
+  expected_clauses: []
+  expect_no_sources: true
+  reference_answer: Уточнить область, поскольку порядок может различаться.
+
+- id: short-area-reply
+  user: employee_public
+  category: area
+  scenario: project-area
+  question: Для Дирекции ИБ.
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: [dib-project-activity#2.7]
+  required_phrases: [координатор]
+  reference_answer: Использовать назначение РП из предыдущего хода и ответить по п. 2.7 ДИБ.
+
+- id: ask-stage
+  user: employee_public
+  category: clarification
+  scenario: missing-stage
+  reset_memory: true
+  question: В ДИБ у кого запрашивать материалы по проекту?
+  areas: []
+  outcome: ask_clarification
+  expected_clauses: []
+  expect_no_sources: true
+  required_phrases: ["?"]
+  reference_answer: Спросить одну деталь про этап или вид материалов, которые нужны сотруднику.
+
+- id: clarify-stage-and-action
+  user: employee_public
+  category: clarification
+  scenario: missing-stage
+  question: Уточню. Это пресейл, нужна спецификация на ПО и оборудование. Кто её запрашивает по регламенту?
+  areas: [ДИБ]
+  outcome: answer
+  expected_clauses: [dib-presale-activity#2.4]
+  reference_answer: Сохранить ДИБ из первого хода и назвать менеджера по продаже решений.
+
+- id: ask-missing-calculation-type
+  user: employee_public
+  category: clarification
+  scenario: missing-object
+  reset_memory: true
+  question: Сколько времени даётся на проверку расчёта по общему порядку компании?
+  areas: []
+  outcome: ask_clarification
+  expected_clauses: []
+  expect_no_sources: true
+  required_phrases: ["?"]
+  reference_answer: Спросить, о расчёте какого типа или исполнителе идёт речь.
+
+- id: clarify-calculation-type
+  user: employee_public
+  category: clarification
+  scenario: missing-object
+  question: Расчёт маржинальности проверяет финансовый контролёр, комплект полный.
+  areas: [общий]
+  outcome: answer
+  expected_clauses: [deal-margin-control#1.2]
+  reference_answer: Три рабочих дня с момента получения полного комплекта в редакции 1.
+
+- id: absent-policy
+  user: employee_public
+  category: qc
+  scenario: parking-to-qc
+  reset_memory: true
+  question: Какой внутренний порядок компенсации подписки на платную парковку для личного автомобиля при удалённой работе?
+  areas: []
+  outcome: not_found
+  expected_clauses: []
+  expect_no_sources: true
+  required_phrases: [Передать в ОКК, подтвердите отправку, могу составить черновик]
+  forbidden_phrases: [заявка отправлена, черновик заявки в ОКК]
+  reference_answer: Обозначить отсутствие однозначного ответа и объяснить ручную отправку вопроса в ОКК. Предложить написать черновик.
+
+- id: qc-draft-on-demand
+  user: employee_public
+  category: qc
+  scenario: parking-to-qc
+  question: Составь, пожалуйста, черновик заявки в ОКК по этому вопросу.
+  areas: []
+  outcome: qc_help
+  expected_clauses: []
+  expect_no_sources: true
+  required_phrases: [черновик заявки, платную парковку, подтвердите отправку]
+  forbidden_phrases: [заявка отправлена, отправил заявку, оно уже передано]
+  reference_answer: Выдать черновик по исходному вопросу о парковке и объяснить отправку через интерфейс.
+
+- id: user-asks-agent-to-send
+  user: employee_public
+  category: qc
+  scenario: parking-to-qc
+  question: Тогда отправь её сам, пожалуйста.
+  areas: []
+  outcome: qc_help
+  expected_clauses: []
+  expect_no_sources: true
+  required_phrases: [Передать в ОКК, подтвердите отправку]
+  forbidden_phrases: [заявка отправлена, отправил заявку, заявку создал]
+  reference_answer: Объяснить ручное подтверждение в интерфейсе.
+
+- id: qc-guide-from-new-chat
+  user: employee_public
+  category: qc
+  reset_memory: true
+  question: Как мне передать вопрос в ОКК?
+  areas: []
+  outcome: qc_help
+  expected_clauses: []
+  expect_no_sources: true
+  required_phrases: [Передать в ОКК, подтвердите отправку]
+  reference_answer: Назвать кнопку у исходного вопроса, необязательный комментарий и подтверждение.
+
+- id: unsupported-with-explicit-constraints
+  user: employee_public
+  category: qc
+  reset_memory: true
+  question: По общему порядку компании, как сотруднику оформить возмещение личного абонемента на домашнюю охрану при удалённой работе?
+  areas: []
+  outcome: not_found
+  expected_clauses: []
+  expect_no_sources: true
+  required_phrases: [Передать в ОКК]
+  reference_answer: Объяснить, что доступные пункты не подтверждают такую компенсацию, и предложить ОКК.
+
+- id: external-task-refusal
+  user: employee_public
+  category: refusal
+  reset_memory: true
+  question: Какая будет маржа по моей конкретной сделке? Посчитай её за меня.
+  areas: []
+  outcome: refusal
+  expected_clauses: []
+  expect_no_sources: true
+  forbidden_phrases: [Передать в ОКК]
+  reference_answer: Отказаться считать показатель конкретной сделки и предложить объяснить внутренний порядок проверки.

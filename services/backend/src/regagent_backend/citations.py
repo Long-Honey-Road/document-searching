@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -16,6 +17,15 @@ from regagent_backend.guard import PROMPTS, StructuredMode, invoke_structured
 _CITATION = re.compile(r"\[f:([^\[\]\s]+)\]")
 _THINK = re.compile(r"<think\b[^>]*>.*?(?:</think\s*>|\Z)", re.IGNORECASE | re.DOTALL)
 _THINK_END = re.compile(r"</think\s*>", re.IGNORECASE)
+_UNCERTAIN = re.compile(
+    r"\b(?:подтвердить|определить|установить|однозначно ответить)"
+    r"[^.!?\n]{0,130}\b(?:не могу|нельзя|не удалось|невозможно)\b"
+    r"|\b(?:не удалось|невозможно|нельзя|не могу|не может)\s+(?:однозначно\s+)?"
+    r"(?:подтвердить|определить|установить|ответить)\b"
+    r"|\bдля\s+(?:однозначного\s+)?ответа\s+(?:не хватает|недостаточно)"
+    r"\s+(?:данных|сведений)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,15 @@ class CitationCheck:
 
 class ComparisonSupport(BaseModel):
     supported: StrictBool
+
+
+class EvidenceReview(BaseModel):
+    outcome: Literal["answer", "not_found", "ask_clarification"]
+    question: str | None
+
+
+def needs_evidence_review(text: str) -> bool:
+    return bool(_UNCERTAIN.search(text.replace("ё", "е")))
 
 
 def extract_citations(text: str) -> list[str]:
@@ -61,6 +80,36 @@ def missing_overrides(text: str, fragments: Mapping[str, Fragment]) -> list[str]
     return missing
 
 
+def _source_data(fragments: list[Fragment]) -> list[dict[str, str]]:
+    return [
+        {
+            "id": fragment.fragment_id,
+            "область": fragment.area,
+            "документ": fragment.title,
+            "текст": fragment.text,
+        }
+        for fragment in fragments
+    ]
+
+
+async def review_evidence(
+    question: str,
+    text: str,
+    cited: list[Fragment],
+    model: BaseChatModel,
+    mode: StructuredMode,
+    run: dict[str, str],
+) -> EvidenceReview:
+    return await invoke_structured(
+        model,
+        EvidenceReview,
+        mode,
+        (PROMPTS / "evidence_check.md").read_text(encoding="utf-8"),
+        {"вопрос": question, "ответ": text, "источники": _source_data(cited)},
+        {"llm_operation": "evidence_check", **run},
+    )
+
+
 async def verify_comparison(
     text: str,
     cited: list[Fragment],
@@ -73,18 +122,7 @@ async def verify_comparison(
         ComparisonSupport,
         mode,
         (PROMPTS / "comparison_check.md").read_text(encoding="utf-8"),
-        {
-            "ответ": text,
-            "источники": [
-                {
-                    "id": fragment.fragment_id,
-                    "область": fragment.area,
-                    "документ": fragment.title,
-                    "текст": fragment.text,
-                }
-                for fragment in cited
-            ],
-        },
+        {"ответ": text, "источники": _source_data(cited)},
         {"llm_operation": "comparison_check", **(run or {})},
     )
     return result.supported
