@@ -1,6 +1,8 @@
 import pytest
 from pydantic import ValidationError
 from regagent_common.contracts import (
+    AdminJob,
+    AdminReview,
     AnswerMeta,
     Area,
     ClauseRequest,
@@ -153,3 +155,40 @@ def test_refs_request_and_response() -> None:
         {"outgoing": [{**ref, "via": "регламентом контроля маржинальности"}], "incoming": []}
     )
     assert resp.outgoing == [DocumentRef(**ref, via="регламентом контроля маржинальности")]
+
+
+def test_admin_job_and_review_contracts() -> None:
+    job = AdminJob.model_validate(
+        {
+            "job_id": "j",
+            "op": "upsert",
+            "doc_id": "a",
+            "version": 3,
+            "status": "failed",
+            "attempts": 4,
+            "error": "превышено время задачи (шаг index)",
+            "current_step": None,
+            "steps": {"parse": 1.5},
+            "created_at": "2026-11-27T10:00:00+07:00",
+            "updated_at": "2026-11-27T10:30:00+07:00",
+        }
+    )
+    assert job.steps == {"parse": 1.5}
+    review = AdminReview.model_validate(
+        {
+            "items": [
+                {
+                    "doc_id": "a",
+                    "version": 3,
+                    "title": "Регламент",
+                    "clause": "2.5",
+                    "via": "регламентом подбора",
+                    "kind": "ambiguous",
+                    "candidates": ["b", "c"],
+                }
+            ]
+        }
+    )
+    assert review.items[0].kind == "ambiguous"
+    with pytest.raises(ValidationError):
+        AdminReview.model_validate({"items": [{**review.items[0].model_dump(), "kind": "x"}]})

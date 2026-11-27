@@ -37,7 +37,15 @@
 
 ### Служебные (`/admin/...`)
 
-`GET /admin/documents`, `GET /admin/jobs?status=failed`, `POST /admin/jobs/{id}/retry`, `GET /admin/review` (глоссарий и ссылки на сверку), `POST /admin/review/{id}` (`accept|reject|edit`). `GET /health` — без токена.
+По сервисному токену, как остальные маршруты knowledge. Модели — в `regagent_common.contracts`.
+
+- `GET /admin/documents` → `{"documents": [{doc_id, version, level, areas, title, status, error, updated_at}]}` — все уровни.
+- `GET /admin/jobs?status=failed&limit=100` → `{"jobs": [{job_id, op, doc_id, version, status, attempts, error, current_step, steps, created_at, updated_at}]}`, свежие первыми; `limit` 1…500.
+- `POST /admin/jobs/{id}/retry` → 202 `{"queued": n}`: повтор документа задачи по текущему манифесту, как `reindex --failed`. 404 — задачи нет; 409 — задача или документ не в `failed`.
+- `GET /admin/review` → `{"items": [{doc_id, version, title, clause, via, kind: "ambiguous"|"missing", candidates}]}` — ссылки по названию на сверку из OKF.
+- `POST /admin/review/{id}` (`accept|reject|edit`) и глоссарий в `/admin/review` — не сделаны (TD-03, P2-B2).
+
+Пока служебная часть не готова (старт knowledge), `/admin/*` отвечает 503. `GET /health` — без токена.
 
 ## RabbitMQ
 

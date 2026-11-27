@@ -76,6 +76,63 @@ class RefsResponse(_Model):
     incoming: list[DocumentRef]
 
 
+# --- служебный API knowledge (/admin, P2-B3) ---
+
+
+class AdminDocument(_Model):
+    doc_id: str
+    version: int | None
+    level: str | None
+    areas: list[str]
+    title: str | None
+    status: str
+    error: str | None
+    updated_at: datetime | None
+
+
+class AdminDocuments(_Model):
+    documents: list[AdminDocument]
+
+
+class AdminJob(_Model):
+    job_id: str
+    op: Literal["upsert", "delete"]
+    doc_id: str
+    version: int
+    status: str
+    attempts: int
+    error: str | None
+    current_step: str | None
+    steps: dict[str, float]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminJobs(_Model):
+    jobs: list[AdminJob]
+
+
+class ReviewItem(_Model):
+    """Ссылка по названию, которую не удалось сопоставить: ``ambiguous`` — подходит к
+    нескольким документам (``candidates``), ``missing`` — документа нет в корпусе."""
+
+    doc_id: str
+    version: int
+    title: str
+    clause: str
+    via: str
+    kind: Literal["ambiguous", "missing"]
+    candidates: list[str] = Field(default_factory=list)
+
+
+class AdminReview(_Model):
+    items: list[ReviewItem]
+
+
+class RetryResponse(_Model):
+    queued: int
+
+
 class Area(_Model):
     """Запись справочника областей (секция ``areas:`` манифеста)."""
 

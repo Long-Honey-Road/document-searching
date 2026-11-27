@@ -21,9 +21,11 @@ async def queue_reindex(
     publisher: IndexPublisher,
     *,
     only_failed: bool = False,
+    doc_ids: set[str] | None = None,
 ) -> int:
     """Ставит переиндексацию документов реестра. ``only_failed`` — только упавших: они есть
-    в манифесте — вставка заново, их уже нет — удаление (D-50)."""
+    в манифесте — вставка заново, их уже нет — удаление (D-50). ``doc_ids`` — только эти
+    документы (повтор из служебного API)."""
     manifest, hashes = await asyncio.to_thread(source.scan)
     if manifest.unidentified_error or manifest.invalid:
         raise ValueError("переиндексация требует валидного манифеста")
@@ -33,7 +35,9 @@ async def queue_reindex(
     records = [
         record
         for record in await registry.all()
-        if record.status != "deleted" and (wanted is None or record.status in wanted)
+        if record.status != "deleted"
+        and (wanted is None or record.status in wanted)
+        and (doc_ids is None or record.doc_id in doc_ids)
     ]
     selected = {record.doc_id for record in records}
     entries = [entry for doc_id, entry in manifest.entries.items() if doc_id in selected]

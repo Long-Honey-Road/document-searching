@@ -116,3 +116,22 @@ async def test_interrupt_indexing_fails_documents_and_marks_jobs_for_retry(
     assert state.current_step is None
     assert (await registry.job_state(done.job_id)).status == "succeeded"  # type: ignore[union-attr]
     assert await registry.interrupt_indexing() == []
+
+
+async def test_jobs_listing_filters_by_status_newest_first(registry: Registry) -> None:
+    from regagent_common.contracts import IndexJob
+
+    older = IndexJob(op="upsert", doc_id="a", version=1, path="a.docx", sha256="s")
+    newer = IndexJob(op="delete", doc_id="b", version=2)
+    ok = IndexJob(op="upsert", doc_id="c", version=1, path="c.docx", sha256="s")
+    await registry.save_job(older, "failed", 4, error="сбой", steps={"parse": 1.0})
+    await registry.save_job(newer, "failed", 4, error="сбой")
+    await registry.save_job(ok, "succeeded", 1)
+
+    failed = await registry.list_jobs(status="failed", limit=10)
+    assert [job.job_id for job in failed] == [newer.job_id, older.job_id]
+    assert failed[1].steps == {"parse": 1.0} and failed[1].error == "сбой"
+    assert len(await registry.list_jobs(status=None, limit=2)) == 2
+    found = await registry.get_job(older.job_id)
+    assert found is not None and (found.doc_id, found.op, found.attempts) == ("a", "upsert", 4)
+    assert await registry.get_job("нет") is None

@@ -5,19 +5,26 @@ from __future__ import annotations
 import asyncio
 import hmac
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import SecretStr
 from regagent_common.contracts import (
+    AdminDocument,
+    AdminDocuments,
+    AdminJob,
+    AdminJobs,
+    AdminReview,
     ClauseRequest,
     ClauseResponse,
     DocumentRef,
     Fragment,
     RefsRequest,
     RefsResponse,
+    RetryResponse,
+    ReviewItem,
     SearchRequest,
     SearchResponse,
 )
@@ -25,7 +32,7 @@ from regagent_common.fragments import FragmentHeader, fragment_id
 from starlette.types import Lifespan
 
 from .manifest import COMMON_AREA
-from .registry import DocumentRecord
+from .registry import DocumentRecord, JobRecord
 from .rerank import Reranker
 from .search import ChunkSearch, search
 from .settings import (
@@ -55,6 +62,21 @@ class ClauseStore(Protocol):
     def active_metadata(self) -> list[dict[str, Any]]: ...
 
 
+class JobLog(Protocol):
+    async def list_jobs(self, *, status: str | None, limit: int) -> list[JobRecord]: ...
+
+    async def get_job(self, job_id: str) -> JobRecord | None: ...
+
+
+@dataclass(frozen=True)
+class AdminDeps:
+    """Служебный API: журнал задач и повтор упавшего документа (``reindex --failed``
+    для одного документа)."""
+
+    jobs: JobLog
+    retry: Callable[[str], Awaitable[int]]
+
+
 @dataclass(frozen=True)
 class ApiDeps:
     service_token: SecretStr
@@ -66,6 +88,7 @@ class ApiDeps:
     search_top_k: int = DEFAULT_SEARCH_TOP_K
     rerank_candidate_limit: int = DEFAULT_RERANK_CANDIDATE_LIMIT
     rerank_text_max_chars: int = DEFAULT_RERANK_TEXT_MAX_CHARS
+    admin: AdminDeps | None = None
 
 
 def _deps(app: FastAPI) -> ApiDeps:
@@ -249,5 +272,73 @@ def create_app(
     @app.post("/refs")
     async def refs_route(req: RefsRequest) -> RefsResponse:
         return await _read_refs(req, _deps(app))
+
+    def _admin() -> tuple[ApiDeps, AdminDeps]:
+        current = _deps(app)
+        if current.admin is None:
+            raise HTTPException(status_code=503, detail="Admin API not ready")
+        return current, current.admin
+
+    @app.get("/admin/documents")
+    async def admin_documents() -> AdminDocuments:
+        current, _ = _admin()
+        records = sorted(await current.registry.all(), key=lambda record: record.doc_id)
+        return AdminDocuments(
+            documents=[
+                AdminDocument(
+                    doc_id=r.doc_id,
+                    version=r.version,
+                    level=r.level,
+                    areas=r.areas,
+                    title=r.title,
+                    status=r.status,
+                    error=r.error,
+                    updated_at=r.updated_at,
+                )
+                for r in records
+            ]
+        )
+
+    @app.get("/admin/jobs")
+    async def admin_jobs(
+        status: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 100
+    ) -> AdminJobs:
+        _, admin = _admin()
+        found = await admin.jobs.list_jobs(status=status, limit=limit)
+        return AdminJobs(jobs=[AdminJob.model_validate(asdict(job)) for job in found])
+
+    @app.post("/admin/jobs/{job_id}/retry", status_code=202)
+    async def admin_retry(job_id: str) -> RetryResponse:
+        current, admin = _admin()
+        job = await admin.jobs.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        record = await current.registry.get(job.doc_id)
+        if job.status != "failed" or record is None or record.status != "failed":
+            raise HTTPException(status_code=409, detail="Document is not failed")
+        return RetryResponse(queued=await admin.retry(job.doc_id))
+
+    @app.get("/admin/review")
+    async def admin_review() -> AdminReview:
+        current, _ = _admin()
+        metadata = await asyncio.to_thread(current.okf.active_metadata)
+        items: list[ReviewItem] = []
+        for meta in metadata:
+            base = {"doc_id": meta["doc_id"], "version": meta["version"], "title": meta["title"]}
+            for link in meta.get("links_needing_review") or []:
+                items.append(
+                    ReviewItem(
+                        **base,
+                        clause=link["clause"],
+                        via=link["via"],
+                        kind="ambiguous",
+                        candidates=list(link.get("candidates") or []),
+                    )
+                )
+            for link in meta.get("missing_links") or []:
+                items.append(
+                    ReviewItem(**base, clause=link["clause"], via=link["via"], kind="missing")
+                )
+        return AdminReview(items=items)
 
     return app

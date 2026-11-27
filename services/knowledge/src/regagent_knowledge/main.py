@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from lightrag.utils import TiktokenTokenizer
 from regagent_common.access import AccessLevels
 
-from .api import ApiDeps, create_app
+from .api import AdminDeps, ApiDeps, create_app
 from .canary import check_isolation
 from .consumer import IndexQueue, run_consumer
 from .lightrag_factory import build_lightrag, make_embedding_func, make_llm_func
@@ -23,9 +23,16 @@ from .parsing import DoclingParser
 from .pipeline import PipelineDeps, recover_after_restart
 from .rag import RagRegistry
 from .registry import Registry
+from .reindex import queue_reindex
 from .rerank import EmbeddingReranker, Reranker, TeiReranker
 from .settings import RuntimeSettings
-from .watcher import run_watcher
+from .watcher import FolderSource, run_watcher
+
+
+async def _retry_document(
+    source: FolderSource, registry: Registry, queue: IndexQueue, doc_id: str
+) -> int:
+    return await queue_reindex(source, registry, queue, only_failed=True, doc_ids={doc_id})
 
 
 @asynccontextmanager
@@ -104,6 +111,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         search_top_k=settings.search_top_k,
                         rerank_candidate_limit=settings.rerank_candidate_limit,
                         rerank_text_max_chars=settings.rerank_text_max_chars,
+                        admin=AdminDeps(
+                            registry,
+                            partial(
+                                _retry_document,
+                                FolderSource(settings.docs_dir, levels),
+                                registry,
+                                queue,
+                            ),
+                        ),
                     )
                     try:
                         yield

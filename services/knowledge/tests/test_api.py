@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -11,10 +12,10 @@ import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from regagent_knowledge.api import ApiDeps, create_app
+from regagent_knowledge.api import AdminDeps, ApiDeps, create_app
 from regagent_knowledge.normalize import Clause
 from regagent_knowledge.okf import ClauseView, RegulationView
-from regagent_knowledge.registry import DocumentRecord, Registry
+from regagent_knowledge.registry import DocumentRecord, JobRecord, Registry
 
 HEADERS = {"X-Service-Token": "test-token"}
 CLAUSE = {"doc_id": "finance", "clause": "1", "levels": ["public"]}
@@ -367,3 +368,124 @@ def test_search_ignores_okf_text_with_different_hash(fixture_deps: ApiDeps) -> N
     assert response.status_code == 200
     assert [fragment["clause"] for fragment in response.json()["fragments"]] == ["6"]
     assert "stale text" not in response.text
+
+
+# --- служебный API (P2-B3) ---------------------------------------------------------
+
+
+class JobLogFixture:
+    def __init__(self) -> None:
+        now = datetime(2026, 11, 27, 10, tzinfo=UTC)
+        self.records = {
+            "j-failed": JobRecord(
+                "j-failed", "upsert", "finance", 2, "failed", 4, "сбой", None, {}, now, now
+            ),
+            "j-ok": JobRecord(
+                "j-ok", "upsert", "public-doc", 2, "succeeded", 1, None, None, {}, now, now
+            ),
+        }
+        self.retried: list[str] = []
+
+    async def list_jobs(self, *, status: str | None, limit: int) -> list[JobRecord]:
+        found = [job for job in self.records.values() if status is None or job.status == status]
+        return found[:limit]
+
+    async def get_job(self, job_id: str) -> JobRecord | None:
+        return self.records.get(job_id)
+
+
+@pytest.fixture
+def admin_deps(fixture_deps: ApiDeps) -> tuple[ApiDeps, JobLogFixture]:
+    log = JobLogFixture()
+
+    async def retry(doc_id: str) -> int:
+        log.retried.append(doc_id)
+        return 1
+
+    return replace(fixture_deps, admin=AdminDeps(log, retry)), log
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/admin/documents"),
+        ("GET", "/admin/jobs"),
+        ("POST", "/admin/jobs/j-failed/retry"),
+        ("GET", "/admin/review"),
+    ],
+)
+def test_admin_requires_service_token(
+    admin_deps: tuple[ApiDeps, JobLogFixture], method: str, path: str
+) -> None:
+    with TestClient(create_app(admin_deps[0])) as client:
+        assert client.request(method, path).status_code == 401
+
+
+def test_admin_lists_documents_of_every_level(admin_deps: tuple[ApiDeps, JobLogFixture]) -> None:
+    with TestClient(create_app(admin_deps[0])) as client:
+        body = client.get("/admin/documents", headers=HEADERS).json()
+    assert {doc["doc_id"]: doc["level"] for doc in body["documents"]} == {
+        "finance": "closed_fin",
+        "public-doc": "public",
+    }
+
+
+def test_admin_lists_failed_jobs(admin_deps: tuple[ApiDeps, JobLogFixture]) -> None:
+    with TestClient(create_app(admin_deps[0])) as client:
+        body = client.get("/admin/jobs", params={"status": "failed"}, headers=HEADERS).json()
+        too_many = client.get("/admin/jobs", params={"limit": 10_000}, headers=HEADERS)
+    assert [job["job_id"] for job in body["jobs"]] == ["j-failed"]
+    assert too_many.status_code == 422
+
+
+def test_admin_retry_queues_failed_job_document_only(
+    admin_deps: tuple[ApiDeps, JobLogFixture],
+) -> None:
+    deps, log = admin_deps
+    with TestClient(create_app(deps)) as client:
+        # Документ уже переиндексирован другой задачей: повторять нечего
+        assert client.post("/admin/jobs/j-failed/retry", headers=HEADERS).status_code == 409
+
+    class FailedRegistry(RegistryFixture):
+        async def get(self, doc_id: str) -> DocumentRecord | None:
+            record = await super().get(doc_id)
+            return replace(record, status="failed") if record else None
+
+    deps = replace(deps, registry=FailedRegistry())
+    with TestClient(create_app(deps)) as client:
+        queued = client.post("/admin/jobs/j-failed/retry", headers=HEADERS)
+        done = client.post("/admin/jobs/j-ok/retry", headers=HEADERS)
+        missing = client.post("/admin/jobs/nope/retry", headers=HEADERS)
+    assert (queued.status_code, queued.json()) == (202, {"queued": 1})
+    assert done.status_code == 409
+    assert missing.status_code == 404
+    assert log.retried == ["finance"]
+
+
+def test_admin_review_lists_ambiguous_and_missing_links(fixture_deps: ApiDeps) -> None:
+    class ReviewOkf(OkfFixture):
+        def active_metadata(self) -> list[dict[str, Any]]:
+            [first, second] = super().active_metadata()
+            first["links_needing_review"] = [
+                {"clause": "2.5", "via": "регламентом", "candidates": ["finance", "public-doc"]}
+            ]
+            second["missing_links"] = [{"clause": "4.4", "via": "Инструкцией по системе"}]
+            return [first, second]
+
+    deps = replace(
+        fixture_deps,
+        okf=ReviewOkf(historical_access="print_only"),
+        admin=AdminDeps(JobLogFixture(), lambda doc_id: asyncio.sleep(0, 0)),
+    )
+    with TestClient(create_app(deps)) as client:
+        items = client.get("/admin/review", headers=HEADERS).json()["items"]
+    assert [(item["doc_id"], item["kind"], item["clause"]) for item in items] == [
+        ("public-doc", "ambiguous", "2.5"),
+        ("finance", "missing", "4.4"),
+    ]
+    assert items[0]["candidates"] == ["finance", "public-doc"]
+
+
+def test_admin_without_admin_deps_is_unavailable(fixture_deps: ApiDeps) -> None:
+    with TestClient(create_app(fixture_deps)) as client:
+        assert client.get("/admin/jobs", headers=HEADERS).status_code == 503

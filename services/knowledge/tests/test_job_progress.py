@@ -175,3 +175,22 @@ async def test_reindex_failed_retries_only_failed_documents(
     assert by_doc["a"].op == "upsert" and isinstance(by_doc["a"], IndexRequest)
     assert by_doc["a"].force and by_doc["a"].sha256 == original.sha256
     assert (by_doc["gone"].op, by_doc["gone"].version) == ("delete", 2)
+
+
+async def test_reindex_failed_can_target_one_document(
+    environment: tuple[Folder, PipelineDeps, Rag],
+) -> None:
+    folder, _, _ = environment
+    registry = MemoryJobs()
+    published: list[IndexJob] = []
+
+    class Publisher:
+        async def publish(self, job: IndexJob) -> None:
+            published.append(job)
+
+    (original,) = await scan(folder.path, LEVELS, registry)
+    await registry.set_status("a", 3, original.sha256, "public", "failed", "сбой")
+    await registry.set_status("gone", 2, "old", "public", "failed", "сбой")
+    source = FolderSource(folder.path, LEVELS)
+    assert await queue_reindex(source, registry, Publisher(), only_failed=True, doc_ids={"a"}) == 1
+    assert [(job.doc_id, job.op) for job in published] == [("a", "upsert")]

@@ -44,6 +44,43 @@ class JobState:
     steps: dict[str, float] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class JobRecord:
+    job_id: str
+    op: str
+    doc_id: str
+    version: int
+    status: str
+    attempts: int
+    error: str | None
+    current_step: str | None
+    steps: dict[str, float]
+    created_at: datetime
+    updated_at: datetime
+
+
+_JOB_COLUMNS = (
+    "job_id, op, doc_id, version, status, attempts, error, current_step, steps, "
+    "created_at, updated_at"
+)
+
+
+def _job(row: Mapping[str, Any]) -> JobRecord:
+    return JobRecord(
+        row["job_id"],
+        row["op"],
+        row["doc_id"],
+        row["version"],
+        row["status"],
+        row["attempts"],
+        row["error"],
+        row["current_step"],
+        json.loads(row["steps"]),
+        row["created_at"],
+        row["updated_at"],
+    )
+
+
 def plan_jobs(
     entries: Iterable[ManifestEntry],
     file_hashes: Mapping[str, str],
@@ -234,6 +271,23 @@ class Registry:
             job.created_at,
             current_step,
         )
+
+    async def list_jobs(self, *, status: str | None, limit: int) -> list[JobRecord]:
+        """Задачи, свежие первыми; ``status=None`` — все."""
+        rows = await self._pool.fetch(
+            f"SELECT {_JOB_COLUMNS} FROM jobs WHERE $1::text IS NULL OR status = $1 "  # noqa: S608
+            "ORDER BY created_at DESC, job_id LIMIT $2",
+            status,
+            limit,
+        )
+        return [_job(row) for row in rows]
+
+    async def get_job(self, job_id: str) -> JobRecord | None:
+        row = await self._pool.fetchrow(
+            f"SELECT {_JOB_COLUMNS} FROM jobs WHERE job_id = $1",  # noqa: S608
+            job_id,
+        )
+        return _job(row) if row is not None else None
 
     async def interrupt_indexing(self) -> list[str]:
         """При старте knowledge: ни один документ и задача не остаются в indexing (D-50).
