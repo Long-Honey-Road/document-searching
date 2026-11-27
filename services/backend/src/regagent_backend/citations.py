@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from langchain_core.language_models import BaseChatModel
@@ -38,6 +39,26 @@ def verify_citations(text: str, seen: set[str]) -> CitationCheck:
     malformed = "[f:" in _CITATION.sub("", text)
     missing = bool(text.strip()) and not citations
     return CitationCheck(bool(citations) and not (unknown or malformed), unknown, missing)
+
+
+def missing_overrides(text: str, fragments: Mapping[str, Fragment]) -> list[str]:
+    """Практика ``overrides`` из этого запуска, привязанная к процитированному пункту, но не
+    процитированная сама. Ответ по заменённому пункту без неё вводит в заблуждение."""
+    cited = set(extract_citations(text))
+    targets = {
+        (fragment.doc_id, fragment.version, fragment.clause)
+        for fragment_id, fragment in fragments.items()
+        if fragment_id in cited and fragment.kind == "regulation"
+    }
+    missing = []
+    for fragment_id, fragment in fragments.items():
+        source = fragment.practice
+        if fragment.kind != "practice" or source is None or source.mode != "overrides":
+            continue
+        bound = {(b.doc_id, b.version, b.clause) for b in source.binds}
+        if bound & targets and fragment_id not in cited:
+            missing.append(fragment_id)
+    return missing
 
 
 async def verify_comparison(

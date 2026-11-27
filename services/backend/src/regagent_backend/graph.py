@@ -35,6 +35,7 @@ from regagent_common.settings import CommonSettings
 from regagent_backend.agent import generate_answer, last_answer
 from regagent_backend.citations import (
     extract_citations,
+    missing_overrides,
     public_text,
     verify_citations,
     verify_comparison,
@@ -97,7 +98,9 @@ TURN_REPORT_TIMEOUT_S = 2.0
 _NOT_REPORTED = frozenset(
     {"no_question", "memory_remember", "memory_forget", "memory_area_unclear", "memory_unavailable"}
 )
-_UNSUPPORTED = frozenset({"citations_rejected", "comparison_rejected", "low_confidence"})
+_UNSUPPORTED = frozenset(
+    {"citations_rejected", "comparison_rejected", "low_confidence", "practice_not_cited"}
+)
 
 
 @dataclass(frozen=True)
@@ -303,6 +306,9 @@ async def _answer(
             return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
         supported = citations.ok
         reason = "citations_rejected"
+        overridden = missing_overrides(text, run.fragments) if supported else []
+        if overridden:
+            supported, reason = False, "practice_not_cited"
         if supported and len(areas) > 1:
             try:
                 with events.timed("answer.comparison_check", **ids) as event:
@@ -332,7 +338,16 @@ async def _answer(
             return _reply(
                 NOT_FOUND, "not_found", reason="empty_search" if empty else "low_confidence"
             ), run
-        if attempt == 0:
+        if attempt == 0 and overridden:
+            history.append(
+                HumanMessage(
+                    "Процитированный пункт заменяет практика ОКК "
+                    + ", ".join(f"[f:{practice_id}]" for practice_id in overridden)
+                    + ". Назови расхождение: что сказано в регламенте и что действует по "
+                    "практике, и сошлись на обе записи."
+                )
+            )
+        elif attempt == 0:
             history.append(
                 HumanMessage(
                     "Предыдущий ответ не прошёл проверку утверждений и ссылок. "

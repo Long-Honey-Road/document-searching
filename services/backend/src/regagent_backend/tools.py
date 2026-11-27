@@ -39,6 +39,20 @@ def parse_fragment_id(fragment_id: str) -> tuple[str, int, str] | None:
     return match["doc"], int(match["version"]), match["clause"]
 
 
+_PRACTICE_MODES = {"clarifies": "уточняет", "overrides": "заменяет"}
+
+
+def _describe(fragment: Fragment) -> str:
+    """Регламент — название и пункт. Практика — режим и привязанные пункты (D-60)."""
+    source = fragment.practice
+    if fragment.kind != "practice" or source is None:
+        return f"{fragment.title}, п. {fragment.clause}"
+    binds = "; ".join(
+        f"п. {bind.clause} документа {bind.doc_id} (ред. {bind.version})" for bind in source.binds
+    )
+    return f"практика ОКК, {_PRACTICE_MODES[source.mode]} {binds}"
+
+
 def _show_fragments(
     fragments: list[Fragment], run: SearchRun, max_chars: int, note: str = ""
 ) -> str:
@@ -46,7 +60,7 @@ def _show_fragments(
     remaining = max_chars - len(note)
     for fragment in fragments:
         block = (
-            f"[f:{fragment.fragment_id}] {fragment.title}, п. {fragment.clause}, "
+            f"[f:{fragment.fragment_id}] {_describe(fragment)}, "
             f"область {fragment.area}\n{fragment.text}"
         )
         if len(block) + 2 > remaining:
