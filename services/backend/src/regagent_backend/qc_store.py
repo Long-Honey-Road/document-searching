@@ -14,6 +14,7 @@ from psycopg import AsyncConnection
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from regagent_backend.events import events
 from regagent_backend.identity import UserIdentity
 from regagent_backend.qc_models import (
     CreateTicket,
@@ -117,14 +118,14 @@ def qc_event(
     error_code: str | None = None,
     **ids: UUID,
 ) -> None:
-    fields = {
-        "service": "backend",
-        "status": status,
-        "duration_ms": duration_ms,
-        "error_code": error_code,
-        **{name: str(value) for name, value in ids.items()},
-    }
-    log.log(logging.WARNING if error_code else logging.INFO, event, extra=fields)
+    # Общий формат событий (D-52): одна JSON-строка в stdout, поля не теряются в тексте лога
+    events.emit_fields(
+        event,
+        {name: str(value) for name, value in ids.items()},
+        status=status,
+        duration_ms=duration_ms,
+        error_code=error_code,
+    )
 
 
 class QCStore:
