@@ -129,3 +129,20 @@ async def test_too_long_fragment_fails_instead_of_being_cut(registry: RagRegistr
 async def test_no_canary_leaks_between_levels(registry: RagRegistry) -> None:
     public, closed = registry.levels
     await check_isolation(registry, [public, closed], [closed])
+
+
+async def test_discard_unfinished_removes_half_indexed_documents(registry: RagRegistry) -> None:
+    """После падения knowledge посреди вставки LightRAG держит документ не в processed.
+    Следующая вставка любого документа подхватила бы его молча (D-50)."""
+    pub, _ = _levels(registry)
+    await _seed(registry)
+    half: Any = registry._rag(pub)  # настоящий LightRAG: нужна вставка без обработки
+    await half.apipeline_enqueue_documents(
+        _chunk("half", "1", pub, "Недоиндексированный пункт"), ids="half@v1", file_paths="half@v1"
+    )
+    assert (await half.doc_status.get_by_id("half@v1"))["status"] == "pending"
+
+    assert await registry.discard_unfinished() == {pub: ["half@v1"]}
+    assert await half.doc_status.get_by_id("half@v1") is None
+    assert (await half.doc_status.get_by_id("pubdoc@v1"))["status"] == "processed"
+    assert await registry.discard_unfinished() == {}

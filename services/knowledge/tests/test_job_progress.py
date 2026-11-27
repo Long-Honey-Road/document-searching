@@ -145,3 +145,33 @@ async def test_reindex_queues_current_document_and_deduplicates_delivery(
     await _process_message(cast(AbstractIncomingMessage, Message(forced)), deps)
     assert rag.calls == [("insert", "public", "a@v3")] * 2
     assert not await scan(folder.path, LEVELS, registry)
+
+
+async def test_reindex_failed_retries_only_failed_documents(
+    environment: tuple[Folder, PipelineDeps, Rag],
+) -> None:
+    folder, deps, _ = environment
+    registry = MemoryJobs()
+    published: list[IndexJob] = []
+
+    class Publisher:
+        async def publish(self, job: IndexJob) -> None:
+            published.append(job)
+
+    source = FolderSource(folder.path, LEVELS)
+    (original,) = await scan(folder.path, LEVELS, registry)
+    await _process_message(
+        cast(AbstractIncomingMessage, Message(original)), replace(deps, registry=registry)
+    )
+    assert await queue_reindex(source, registry, Publisher(), only_failed=True) == 0
+
+    record = await registry.get("a")
+    assert record is not None
+    await registry.set_status("a", record.version, record.sha256, record.level, "failed", "сбой")
+    # Документ упал и исчез из манифеста: повтор — удаление, а не вставка
+    await registry.set_status("gone", 2, "old", "public", "failed", "сбой")
+    assert await queue_reindex(source, registry, Publisher(), only_failed=True) == 2
+    by_doc = {job.doc_id: job for job in published}
+    assert by_doc["a"].op == "upsert" and isinstance(by_doc["a"], IndexRequest)
+    assert by_doc["a"].force and by_doc["a"].sha256 == original.sha256
+    assert (by_doc["gone"].op, by_doc["gone"].version) == ("delete", 2)

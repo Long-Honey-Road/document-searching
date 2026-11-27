@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -23,6 +24,8 @@ from .references import DocumentReferences, find_document_references
 from .registry import DocumentRecord, Registry
 from .settings import KnowledgeSettings
 from .watcher import FolderSource
+
+log = logging.getLogger(__name__)
 
 
 class IndexStorage(Protocol):
@@ -203,3 +206,21 @@ async def process_job(
     except Exception as exc:
         await progress.fail_document(str(exc))
         raise
+
+
+class _Leftovers(Protocol):
+    async def discard_unfinished(self) -> dict[str, list[str]]: ...
+
+
+class _Interruptible(Protocol):
+    async def interrupt_indexing(self) -> list[str]: ...
+
+
+async def recover_after_restart(rag: _Leftovers, registry: _Interruptible) -> None:
+    """До запуска consumer: убрать из LightRAG недоделанные вставки и снять indexing в
+    реестре (D-50). Порядок важен: реестр — источник истины, LightRAG чистим первым."""
+    if discarded := await rag.discard_unfinished():
+        listed = "; ".join(f"{level}: {', '.join(keys)}" for level, keys in discarded.items())
+        log.warning("удалены недоделанные вставки LightRAG — %s", listed)
+    if interrupted := await registry.interrupt_indexing():
+        log.warning("прервана индексация: %s — документы в failed", ", ".join(interrupted))

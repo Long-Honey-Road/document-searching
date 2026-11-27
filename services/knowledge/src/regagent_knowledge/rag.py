@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from lightrag import QueryParam
-from lightrag.base import DeletionResult
+from lightrag.base import DeletionResult, DocStatus
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +25,14 @@ SENTINEL_WORKSPACE = "lvl__sentinel"
 # ровно по нему; во фрагментах встречаться не может — проверяется при вставке.
 FRAGMENT_SEPARATOR = "\n\n␞␞FRAGMENT␞␞\n\n"
 _PROCESSED = "processed"
+_UNFINISHED = [
+    DocStatus.PENDING,
+    DocStatus.PARSING,
+    DocStatus.ANALYZING,
+    DocStatus.PROCESSING,
+    DocStatus.PREPROCESSED,
+    DocStatus.FAILED,
+]
 _CANCEL_CLEANUP_TIMEOUT_S = 5.0
 
 
@@ -109,6 +117,22 @@ class RagRegistry:
             rag = self._factory(self.workspace(level))
             await rag.initialize_storages()
             self._rags[level] = rag
+
+    async def discard_unfinished(self) -> dict[str, list[str]]:
+        """Удаляет из LightRAG документы, вставка которых не дошла до processed (D-50).
+
+        После падения процесса посреди ``ainsert`` документ остаётся в pending/processing/
+        failed, и LightRAG подхватил бы его при вставке любого другого документа. Реестр
+        knowledge — источник истины: такой документ переиндексирует повторная задача."""
+        discarded: dict[str, list[str]] = {}
+        for level in self._levels:
+            rag = self._rag(level)
+            unfinished = await rag.doc_status.get_docs_by_statuses(_UNFINISHED)
+            for doc_key in sorted(unfinished):
+                await self.delete(level, doc_key)
+            if unfinished:
+                discarded[level] = sorted(unfinished)
+        return discarded
 
     async def stop(self) -> None:
         for rag in [*self._rags.values(), *([self._sentinel] if self._sentinel else [])]:

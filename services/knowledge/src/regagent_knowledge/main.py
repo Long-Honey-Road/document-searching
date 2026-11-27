@@ -20,7 +20,7 @@ from .consumer import IndexQueue, run_consumer
 from .lightrag_factory import build_lightrag, make_embedding_func, make_llm_func
 from .okf import OkfStore
 from .parsing import DoclingParser
-from .pipeline import PipelineDeps
+from .pipeline import PipelineDeps, recover_after_restart
 from .rag import RagRegistry
 from .registry import Registry
 from .rerank import EmbeddingReranker, Reranker, TeiReranker
@@ -75,6 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 [level for level in levels.all() if level not in public_levels],
                 top_k=settings.search_top_k,
             )
+            await recover_after_restart(rag, registry)
             indexing = PipelineDeps(
                 DoclingParser(), okf, rag, registry, settings, levels=levels, tokenizer=tokenizer
             )

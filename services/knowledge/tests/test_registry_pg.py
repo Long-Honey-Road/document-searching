@@ -89,3 +89,30 @@ async def test_unknown_status_rejected(registry: Registry) -> None:
 async def test_migrate_is_idempotent(registry: Registry) -> None:
     await registry.migrate()
     await registry.migrate()
+
+
+async def test_interrupt_indexing_fails_documents_and_marks_jobs_for_retry(
+    registry: Registry,
+) -> None:
+    from regagent_common.contracts import IndexJob
+
+    await registry.set_status("a", 1, "s", "public", "indexing")
+    await registry.set_status("b", 1, "s", "public", "indexed")
+    job = IndexJob(op="upsert", doc_id="a", version=1, path="a.docx", sha256="s")
+    done = IndexJob(op="upsert", doc_id="b", version=1, path="b.docx", sha256="s")
+    await registry.save_job(job, "indexing", 2, current_step="index")
+    await registry.save_job(done, "succeeded", 1)
+
+    assert await registry.interrupt_indexing() == ["a"]
+
+    a = await registry.get("a")
+    assert a is not None and a.status == "failed"
+    assert a.error == "индексация прервана перезапуском knowledge"
+    b = await registry.get("b")
+    assert b is not None and b.status == "indexed"
+    state = await registry.job_state(job.job_id)
+    # Счётчик не сброшен: повторная доставка засчитает падение как неудачную попытку
+    assert state is not None and (state.status, state.attempts) == ("retrying", 2)
+    assert state.current_step is None
+    assert (await registry.job_state(done.job_id)).status == "succeeded"  # type: ignore[union-attr]
+    assert await registry.interrupt_indexing() == []

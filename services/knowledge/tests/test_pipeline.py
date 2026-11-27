@@ -274,3 +274,27 @@ async def test_watcher_publishes_initial_and_changed_document(
     finally:
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
+
+
+async def test_recover_after_restart_discards_lightrag_leftovers_before_registry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from regagent_knowledge.pipeline import recover_after_restart
+
+    calls: list[str] = []
+
+    class Leftovers:
+        async def discard_unfinished(self) -> dict[str, list[str]]:
+            calls.append("rag")
+            return {"public": ["a@v3"]}
+
+    class Interrupted:
+        async def interrupt_indexing(self) -> list[str]:
+            calls.append("registry")
+            return ["a"]
+
+    with caplog.at_level("WARNING"):
+        await recover_after_restart(Leftovers(), Interrupted())
+    assert calls == ["rag", "registry"]
+    assert "public: a@v3" in caplog.text
+    assert "прервана индексация: a" in caplog.text

@@ -20,6 +20,7 @@ from .manifest import ManifestEntry
 
 DocStatus = Literal["queued", "indexing", "indexed", "failed", "invalid_manifest", "deleted"]
 STATUSES: frozenset[str] = frozenset(get_args(DocStatus))
+INTERRUPTED = "индексация прервана перезапуском knowledge"
 
 
 @dataclass(frozen=True)
@@ -233,6 +234,30 @@ class Registry:
             job.created_at,
             current_step,
         )
+
+    async def interrupt_indexing(self) -> list[str]:
+        """При старте knowledge: ни один документ и задача не остаются в indexing (D-50).
+
+        Документ — в failed: его переиндексирует повторная доставка сообщения или
+        ``reindex --failed``. Задача — в retrying: повторная доставка засчитает падение как
+        неудачную попытку, и документ, роняющий knowledge, уйдёт в DLQ."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            rows = await conn.fetch(
+                """
+                UPDATE documents SET status = 'failed', error = $1, updated_at = now()
+                WHERE status = 'indexing' RETURNING doc_id
+                """,
+                INTERRUPTED,
+            )
+            await conn.execute(
+                """
+                UPDATE jobs SET status = 'retrying', error = $1, current_step = NULL,
+                    updated_at = now()
+                WHERE status = 'indexing'
+                """,
+                INTERRUPTED,
+            )
+        return sorted(row["doc_id"] for row in rows)
 
     async def update_job_progress(
         self, job_id: str, attempt: int, current_step: str | None, steps: Mapping[str, float]
