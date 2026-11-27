@@ -13,9 +13,15 @@ members = ["packages/common", "services/knowledge", "services/backend"]
 
 [tool.uv.sources]
 regagent-common = { workspace = true }
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
-# Версии не закреплены намеренно: первый `uv lock` берёт актуальные,
-# дальше их фиксирует uv.lock. Новые зависимости добавлять через `uv add`.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# uv.lock фиксирует разрешённые версии. Новые зависимости добавлять через `uv add`.
 [dependency-groups]
 dev = [
   "pytest",
@@ -24,17 +30,21 @@ dev = [
   "ruff",
   "mypy",
   "testcontainers",
+  "python-docx>=1.2.0",
+  "pyyaml>=6.0.4",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["packages", "services"]
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["packages", "services", "deploy/tests", "scripts/synth/tests", "tests/e2e"]
 markers = [
   "integration: нужны контейнеры (Postgres, RabbitMQ)",
   "e2e: весь стенд в compose",
   "llm: настоящая модель, в CI по умолчанию не запускается",
   "leak: тесты на утечки между уровнями доступа",
 ]
+pythonpath = ["."]
 addopts = "-m 'not integration and not e2e and not llm' --import-mode=importlib"
 
 [tool.ruff]
@@ -49,6 +59,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках 
 "**/tests/**" = ["S101"]
 
 [tool.mypy]
+explicit_package_bases = true
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true

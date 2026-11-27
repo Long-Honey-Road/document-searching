@@ -1,0 +1,141 @@
+{
+  "realm": "regagent",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "qc"
+      },
+      {
+        "name": "admin"
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "levels",
+      "subGroups": [
+        {
+          "name": "closed_fin"
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "regagent-web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "${PUBLIC_BASE_URL}/",
+        "${WEB_DEV_BASE_URL}/"
+      ],
+      "webOrigins": [
+        "${PUBLIC_BASE_URL}",
+        "${WEB_DEV_BASE_URL}"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${PUBLIC_BASE_URL}/##${WEB_DEV_BASE_URL}/"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "claim.name": "groups",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "backend-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "regagent-web",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "employee_public",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "firstName": "Демо",
+      "lastName": "employee_public",
+      "email": "employee_public@example.invalid"
+    },
+    {
+      "username": "employee_fin",
+      "enabled": true,
+      "groups": [
+        "/levels/closed_fin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_EMPLOYEE_FIN_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "firstName": "Демо",
+      "lastName": "employee_fin",
+      "email": "employee_fin@example.invalid"
+    },
+    {
+      "username": "qc_expert",
+      "enabled": true,
+      "realmRoles": [
+        "qc"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_QC_EXPERT_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "firstName": "Демо",
+      "lastName": "qc_expert",
+      "email": "qc_expert@example.invalid"
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "realmRoles": [
+        "admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_ADMIN_DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "firstName": "Демо",
+      "lastName": "admin",
+      "email": "admin@example.invalid"
+    }
+  ]
+}

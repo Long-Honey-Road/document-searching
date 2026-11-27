@@ -10,13 +10,23 @@
 		-Server
 	}
 
-	respond /robots.txt <<TXT
-		User-agent: *
-		Disallow: /
-		TXT 200
+	# Move browser entry to the configured origin before OIDC stores PKCE state.
+	@loopbackAlias {
+		host localhost 127.0.0.1
+		path /
+		method GET HEAD
+		expression `{scheme} + "://" + {hostport} != "{$PUBLIC_BASE_URL:http://localhost:8080}"`
+	}
+	redir @loopbackAlias {$PUBLIC_BASE_URL:http://localhost:8080}{uri} 302
+
+	handle /robots.txt {
+		respond <<TXT
+			User-agent: *
+			Disallow: /
+			TXT 200
+	}
 
 	# Лимит по IP добавляется плагином rate_limit (задача P0-3); лимит на учётку — в backend.
-
 	handle_path /api/* {
 		reverse_proxy backend:8000
 	}

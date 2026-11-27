@@ -23,7 +23,7 @@ dev_docs/             документация и планы
 
 ```bash
 cp .env.example .env            # заполнить адреса модели, пароли
-uv sync --all-packages          # первый запуск создаёт uv.lock с актуальными версиями
+uv sync --all-packages --frozen # установить версии из uv.lock
 uv run pytest                   # unit-тесты
 docker compose -f deploy/compose.yaml --env-file .env up -d
 ```
