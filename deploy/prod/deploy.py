@@ -93,8 +93,31 @@ def stand_env_problems(env: dict[str, str]) -> list[str]:
     return sorted(set(problems))
 
 
+# Секреты, которые стенд создаёт себе сам. Внешние ключи (LLM_API_KEY) вписывает человек.
+_GENERATED_SECRET = re.compile(r"[A-Z0-9_]+_(?:PASSWORD|TOKEN)")
+# Переменные, в которые вшит пароль другой переменной
+_DERIVED_SECRETS = {"RABBITMQ_URL": "RABBITMQ_PASSWORD"}
+
+
+def _fill_secrets(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    filled: dict[str, str] = {}
+    for key, value in env.items():
+        if value in _PLACEHOLDERS and _GENERATED_SECRET.fullmatch(key):
+            filled[key] = secrets.token_urlsafe(32)
+    for key, origin in _DERIVED_SECRETS.items():
+        if origin in filled and key in env:
+            value = env[key]
+            for placeholder in _PLACEHOLDERS:
+                value = value.replace(f":{placeholder}@", f":{filled[origin]}@")
+            if value != env[key]:
+                filled[key] = value
+    left = [key for key, value in env.items() if value in _PLACEHOLDERS and key not in filled]
+    return filled, left
+
+
 def init_env(source: Path, destination: Path, base: str) -> None:
-    """Первичный .env стенда из исходного; существующий не трогается."""
+    """Первичный .env стенда из исходного; существующий не трогается. Заглушки паролей и
+    внутренних токенов заменяются случайными значениями, значения в вывод не попадают."""
     if destination.exists():
         return
     issuer = base + "/auth/realms/regagent"
@@ -107,17 +130,23 @@ def init_env(source: Path, destination: Path, base: str) -> None:
         "RERANK_MODE": "embeddings",
         "LIGHTRAG_EXTRACT_GLEANING": "0",
     }
+    text = source.read_text()
+    secrets_filled, left = _fill_secrets(parse_env(text))
+    replaced = {**secrets_filled, **overrides}
     lines = [
         line
-        for line in source.read_text().splitlines()
-        if line.partition("=")[0].strip() not in overrides
+        for line in text.splitlines()
+        if line.partition("=")[0].removeprefix("export ").strip() not in replaced
     ]
-    lines += [f"{key}={value}" for key, value in overrides.items()]
+    lines += [f"{key}={value}" for key, value in replaced.items()]
+    destination.touch(mode=0o600)
     destination.write_text("\n".join(lines) + "\n")
+    if secrets_filled:
+        print("Сгенерированы секреты: " + ", ".join(sorted(secrets_filled)))
+    if left:
+        print("Впишите вручную, иначе релиз не пройдёт: " + ", ".join(sorted(left)))
 
 
-# Локальный адрес самого стенда (значение по умолчанию из .env.example). Общий поиск
-# localhost не годится: библиотеки в сборке содержат свои http://localhost:3000, :8123 и т.п.
 # Что релиз проверяет через прокси на loopback. Админка Keycloak должна быть закрыта (D-47).
 PROBE_PATHS: tuple[tuple[str, set[int]], ...] = (
     ("/", {200}),
@@ -127,6 +156,8 @@ PROBE_PATHS: tuple[tuple[str, set[int]], ...] = (
     ("/auth/admin/", {404}),
     ("/auth/realms/master/.well-known/openid-configuration", {404}),
 )
+# Локальный адрес самого стенда (значение по умолчанию из .env.example). Общий поиск
+# localhost не годится: библиотеки в сборке содержат свои http://localhost:3000, :8123 и т.п.
 LOCAL_STAND_URLS = ("http://localhost:8080", "http://127.0.0.1:8080")
 
 

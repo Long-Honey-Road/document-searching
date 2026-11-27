@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import re
 from pathlib import Path
 from runpy import run_path
 from urllib.parse import parse_qs, urlsplit
@@ -145,6 +146,58 @@ def test_init_env_never_overwrites_existing_env(tmp_path):
     target.write_text("ENV=stand\nKEEP=1\n")
     deploy["init_env"](source, target, "https://regagent.example.tech")
     assert target.read_text() == "ENV=stand\nKEEP=1\n"
+
+
+SECRETS_SOURCE = (
+    "LLM_API_KEY=change-me\n"
+    "POSTGRES_SUPERUSER_PASSWORD=change-me\n"
+    "RABBITMQ_PASSWORD=change-me\n"
+    "RABBITMQ_URL=amqp://regagent:change-me@rabbitmq:5672/\n"
+    "KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD=replace-me\n"
+    "KNOWLEDGE_INTERNAL_TOKEN=change-me\n"
+    "KEYCLOAK_ADMIN=admin\n"
+    "APP_DB_PASSWORD=уже-задан\n"
+)
+
+
+def test_init_env_generates_local_secrets_but_not_external_keys(tmp_path, capsys):
+    source = tmp_path / "source.env"
+    source.write_text(SECRETS_SOURCE)
+    target = tmp_path / ".env"
+    deploy["init_env"](source, target, "https://regagent.example.tech")
+    env = deploy["parse_env"](target.read_text())
+    generated = [
+        "POSTGRES_SUPERUSER_PASSWORD",
+        "RABBITMQ_PASSWORD",
+        "KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD",
+        "KNOWLEDGE_INTERNAL_TOKEN",
+    ]
+    for name in generated:
+        assert env[name] not in {"change-me", "replace-me"}
+        assert len(env[name]) >= 32
+        assert re.fullmatch(r"[A-Za-z0-9_-]+", env[name]), "значение годится для URL и .env"
+    assert len({env[name] for name in generated}) == len(generated)
+    assert env["RABBITMQ_URL"] == f"amqp://regagent:{env['RABBITMQ_PASSWORD']}@rabbitmq:5672/"
+    # Внешний ключ модели генерировать бессмысленно: его вписывает человек, релиз ждёт
+    assert env["LLM_API_KEY"] == "change-me"
+    assert deploy["stand_env_problems"](env) == [
+        "LLM_API_KEY: осталось значение-заглушка из .env.example"
+    ]
+    assert env["APP_DB_PASSWORD"] == "уже-задан"  # noqa: S105
+    assert env["KEYCLOAK_ADMIN"] == "admin"
+    out = capsys.readouterr().out
+    assert "RABBITMQ_PASSWORD" in out and "LLM_API_KEY" in out
+    assert all(env[name] not in out for name in generated)
+
+
+def test_init_env_secrets_differ_between_installs(tmp_path):
+    source = tmp_path / "source.env"
+    source.write_text(SECRETS_SOURCE)
+    values = []
+    for name in ("a.env", "b.env"):
+        deploy["init_env"](source, tmp_path / name, "https://regagent.example.tech")
+        values.append(deploy["parse_env"]((tmp_path / name).read_text())["RABBITMQ_PASSWORD"])
+    assert values[0] != values[1]
 
 
 def test_web_bundle_with_local_stand_address_is_rejected():
