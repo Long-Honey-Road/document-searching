@@ -67,8 +67,8 @@ export function Answer({ text, meta }: { text: string; meta?: AnswerMeta }) {
                 tabIndex={-1}
                 className="scroll-mt-4 rounded-lg border bg-muted/30 px-3 py-2 target:ring-2 target:ring-ring"
               >
-                <span className="font-medium">[{source.n}] {source.title}</span>
-                <p className="text-xs text-muted-foreground">п. {source.clause}{source.version !== null && ` · ред. ${source.version}`}</p>
+                <span className="font-medium">[{source.n}] {source.kind === 'practice' ? 'Практика ОКК' : source.title}</span>
+                <p className="text-xs text-muted-foreground">{source.kind === 'practice' ? 'к п.' : 'п.'} {source.clause}{source.version !== null && ` · ред. ${source.version}`}</p>
               </li>
             ))}
           </ol>

@@ -187,6 +187,14 @@ documents:
   access: public
   version: 1
   effective_from: *id001
+- file: business-travel-expenses.docx
+  doc_id: business-travel-expenses
+  title: Регламент командировочных расходов
+  areas:
+  - общий
+  access: public
+  version: 1
+  effective_from: *id001
 - file: license-return.docx
   doc_id: license-return
   title: Регламент возврата программных лицензий

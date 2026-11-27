@@ -9,6 +9,7 @@ secrets/
 # --- Данные: документы заказчика, OKF стенда, выгрузки ---
 data/*
 !data/README.md
+!data/practice_seeds.yaml
 !data/docs/
 !data/okf/
 data/docs/*
