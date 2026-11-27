@@ -26,3 +26,5 @@ docker compose --env-file .env -f deploy/compose.yaml up -d --build
 На другом checkout укажите расположение исходных образцов через `REGAGENT_E2E_SAMPLES_DIR`.
 Путь к файлу с локальными настройками задаётся `REGAGENT_E2E_ENV_FILE`,
 путь к монтируемому корпусу — `REGAGENT_E2E_DOCS_DIR`.
+
+Для автоматической выкладки из `main` используйте [инструкцию для Mac](prod/README.md).
