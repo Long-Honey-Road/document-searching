@@ -78,7 +78,7 @@ web заменяет `[f:...]` на номера `[1]` по `sources`.
 
 Где лежит (D-19): итоговое сообщение — AIMessage из узла `finalize`, `AnswerMeta` — в `additional_kwargs.answer_meta`. `assistant_id` — `regagent`. Публичный стрим доставляет проверенный итог. Вызовы инструментов, результаты поиска и черновик модели остаются во внутреннем запуске (D-35).
 
-В публичном стриме событие `metadata` содержит `run_id`. Прогон качества сохраняет его вместе с ответом или ошибкой, если сервер успел передать идентификатор. По нему ищутся события `turn.result` и отдельные этапы внутри backend. У `ask_area`, `ask_clarification` и `qc_help` поле `sources` пустое (D-62, D-63).
+В публичном стриме событие `metadata` содержит `run_id`. Прогон качества сохраняет его вместе с ответом или ошибкой, если сервер успел передать идентификатор. По нему ищутся события `turn.result` и отдельные этапы внутри backend. У `ask_area`, `ask_clarification` и `qc_help` поле `sources` пустое. Флаг `areas_diverge` в результатах поиска совместим с исходом `not_found`, если выдача не подтверждает ответ на вопрос (D-62…D-64).
 
 ## Итог хода для аналитики ОКК (стык B + C)
 
@@ -170,7 +170,7 @@ Store namespace `("users", sub, "memory")`, ключ `area:ДИБ`, значен
 
 `llm.usage` пишется на каждый физический вызов модели или эмбеддингов (D-53). Токены — только из ответа провайдера; если он их не прислал или вызов упал, `usage_source=unknown` и чисел нет. Ответ из кэша LightRAG модель не вызывает и события не даёт.
 
-`reason` в `turn.result` — код исхода: `practice_not_cited`, `off_topic`, `injection`, `partial_topic`, `too_long`, `no_question`, `rate_limit`, `guard_error`, `memory_stale`, `memory_area_unclear`, `memory_remember`, `memory_forget`, `memory_unavailable`, `areas_diverge`, `missing_detail`, `empty_search`, `no_regulation_support`, `search_unavailable`, `qc_draft`, `qc_guide`, `generation_error`, `citations_rejected`, `comparison_rejected`, `comparison_check_error`, `evidence_check_error`; у проверенного ответа — нет. `not_found` у `/clause` и `/refs` означает «нет документа или нет прав» — как и в ответе, без различия. События backend и knowledge пока связаны только по времени: `run_id` в knowledge не передаётся. События выкатки пишутся в `~/srv/regagent_prod/logs/events.jsonl` хоста, остальные — в stdout контейнеров.
+`reason` в `turn.result` — код исхода: `practice_not_cited`, `off_topic`, `injection`, `partial_topic`, `too_long`, `no_question`, `rate_limit`, `guard_error`, `memory_stale`, `memory_area_unclear`, `memory_remember`, `memory_forget`, `memory_unavailable`, `areas_diverge`, `area_needed`, `missing_detail`, `empty_search`, `no_regulation_support`, `search_unavailable`, `qc_draft`, `qc_guide`, `generation_error`, `citations_rejected`, `comparison_rejected`, `comparison_check_error`, `evidence_check_error`; у проверенного ответа — нет. `not_found` у `/clause` и `/refs` означает «нет документа или нет прав» — как и в ответе, без различия. События backend и knowledge пока связаны только по времени: `run_id` в knowledge не передаётся. События выкатки пишутся в `~/srv/regagent_prod/logs/events.jsonl` хоста, остальные — в stdout контейнеров.
 
 ## Переменные `.env`
 

@@ -55,6 +55,7 @@ from regagent_backend.dialogue import (
     NOT_FOUND,
     QC_GUIDE,
     Topic,
+    asks_for_area,
     current_topic,
     parse_clarification,
     qc_draft,
@@ -273,6 +274,8 @@ async def _answer(
     areas: tuple[str, ...],
     area_source: AreaSource,
     ids: dict[str, str],
+    *,
+    area_question: bool,
 ) -> tuple[AIMessage, SearchRun]:
     run = SearchRun()
     trace = _TRACE.get()
@@ -304,8 +307,13 @@ async def _answer(
     queries = [query for query in queries if query][:2]
     if len(queries) < 2 and continuation is None:
         queries = [part.strip(" ,;") for part in _SECOND_QUESTION.split(initial_query, maxsplit=1)]
-    if continuation is not None or len(queries) < 2 or settings.AGENT_MAX_SEARCHES == 1:
+    if settings.AGENT_MAX_SEARCHES == 1:
         queries = [initial_query]
+    elif continuation is not None:
+        queries = list(dict.fromkeys([initial_query, *queries[:1]]))
+    elif len(queries) < 2:
+        queries = [initial_query]
+    queries = queries[: settings.AGENT_MAX_SEARCHES]
     calls = [
         ToolCall(name="search_docs", args={"query": query}, id=f"initial-search-{i}")
         for i, query in enumerate(queries, 1)
@@ -319,7 +327,7 @@ async def _answer(
             for call in calls
         ),
     )
-    if not areas and any(result.areas_diverge for _, result in run.searches):
+    if area_question and not areas and any(result.areas_diverge for _, result in run.searches):
         return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
     if run.unavailable and not run.searches:
         return _unanswered(run), run
@@ -349,14 +357,17 @@ async def _answer(
         answer = last_answer(history)
         text = public_text(answer) if answer is not None else ""
         citations = verify_citations(text, set(run.fragments))
-        if not areas and any(result.areas_diverge for _, result in run.searches):
-            return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
         if text == NO_ANSWER:
             return _unanswered(run), run
         if clarification := parse_clarification(text):
+            if not areas and asks_for_area(clarification):
+                return _reply(ASK_AREA, "ask_area", reason="area_needed"), run
             if not can_clarify:
                 return _unanswered(run), run
-            return _ask_detail(clarification, areas, area_source), run
+            if not asks_for_area(clarification):
+                return _ask_detail(clarification, areas, area_source), run
+        if not areas and any(result.areas_diverge for _, result in run.searches):
+            return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
         supported = citations.ok and not text.startswith((CLARIFY_PREFIX, NO_ANSWER))
         reason = "citations_rejected"
         overridden = missing_overrides(text, run.fragments) if supported else []
@@ -528,8 +539,12 @@ async def _turn(
             continuation = Topic([*prior.questions, questions[-1]], prior.clarification_count)
             source = "asked"
 
-    can_clarify = continuation is None or continuation.clarification_count < MAX_DETAIL_QUESTIONS
-    if can_clarify and (detail := valid_clarification(guard.missing_detail or "")):
+    if continuation and guard.area_only and areas and len(continuation.questions) > 1:
+        continuation = Topic(continuation.questions[:-1], continuation.clarification_count)
+
+    detail = valid_clarification(guard.missing_detail or "")
+    area_question = bool(detail and asks_for_area(detail))
+    if continuation is None and detail and not area_question:
         return _ask_detail(detail, areas, source)
 
     now = datetime.now(UTC)
@@ -555,6 +570,7 @@ async def _turn(
         areas,
         source,
         ids,
+        area_question=area_question,
     )
     meta = AnswerMeta.model_validate(reply.additional_kwargs["answer_meta"])
     if (

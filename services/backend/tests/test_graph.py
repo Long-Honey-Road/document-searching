@@ -208,7 +208,7 @@ async def test_clarification_semantic_area_memory_and_tool_allowlist(stand: Any)
     assert "closed_fin" not in prompt
 
     # Один сигнал (ответ на уточнение) ещё не память: нужен второй (D-55)
-    model.responses = [guard()]
+    model.responses = [guard(), {"content": "УТОЧНЕНИЕ: Для какой области нужен ответ?"}]
     unscoped = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
     assert meta(unscoped["messages"][-1]).outcome == "ask_area"
     model.responses = [guard("ДИБ"), search(), answer]
@@ -638,8 +638,8 @@ async def test_area_only_reply_retries_original_question_after_fallback(stand: A
         {"messages": [*first["messages"], ("human", "Для Дирекции ИБ.")]}, config=CONFIG
     )
     assert meta(second["messages"][-1]).outcome == "answer"
-    assert "Кто назначает руководителя проекта?" in lookups[-1]["query"]
-    assert "Для Дирекции ИБ." in lookups[-1]["query"]
+    assert lookups[-1]["query"] == "Кто назначает руководителя проекта?"
+    assert lookups[-1]["areas"] == ["ДИБ"]
 
 
 async def test_evidence_check_keeps_a_directly_supported_negative_answer(stand: Any) -> None:
@@ -660,3 +660,47 @@ async def test_evidence_check_keeps_a_directly_supported_negative_answer(stand: 
     assert meta(reply).outcome == "answer"
     assert meta(reply).sources[0].fragment_id == PUNKT.fragment_id
     assert reply.text == supported_draft
+
+
+async def test_area_question_from_guard_uses_area_outcome(stand: Any) -> None:
+    model, graph, _ = stand
+    classification = json.loads(guard()["content"])
+    classification["missing_detail"] = "В какой области действует правило назначения РП?"
+    model.responses = [{"content": json.dumps(classification)}]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Кто назначает руководителя проекта?")]}, config=CONFIG
+    )
+    assert meta(state["messages"][-1]).outcome == "ask_area"
+
+
+async def test_answers_clarification_instead_of_repeating_guard_question(stand: Any) -> None:
+    model, graph, lookups = stand
+    classification = json.loads(guard("ДИБ")["content"])
+    classification["missing_detail"] = "Какой тип расчёта нужно проверить?"
+    model.responses = [{"content": json.dumps(classification)}]
+    first = await graph.ainvoke(
+        {"messages": [("human", "В ДИБ кто проверяет расчёт?")]}, config=CONFIG
+    )
+    assert meta(first["messages"][-1]).outcome == "ask_clarification"
+    model.responses = [
+        {"content": json.dumps(classification)},
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    second = await graph.ainvoke(
+        {"messages": [*first["messages"], ("human", "Расчёт проекта, комплект полный.")]},
+        config=CONFIG,
+    )
+    assert meta(second["messages"][-1]).outcome == "answer"
+    assert "Расчёт проекта, комплект полный" in lookups[-1]["query"]
+
+
+async def test_divergent_search_does_not_force_area_for_an_unanswered_question(stand: Any) -> None:
+    model, graph, _ = stand
+    model.responses = [guard(), {"content": "НЕТ_ОТВЕТА"}]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Как компенсируют платную парковку при удалённой работе?")]},
+        config=CONFIG,
+    )
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "not_found"
+    assert "Передать в ОКК" in reply.text

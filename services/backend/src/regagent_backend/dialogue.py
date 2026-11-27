@@ -23,6 +23,15 @@ NOT_FOUND = (
     f"{QC_GUIDE} По вашей просьбе могу составить черновик заявки."
 )
 _MARKDOWN = re.compile(r"([\\`*_{}\[\]<>()#!])")
+_AREA_QUESTION = re.compile(
+    r"\b(?:како(?:й|м|му)|какую|каки[ех])\s+"
+    r"(?:област\w*|дирекци\w*|департамент\w*|подразделени\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_area(question: str) -> bool:
+    return bool(_AREA_QUESTION.search(question))
 
 
 def parse_clarification(text: str) -> str | None:

@@ -178,7 +178,7 @@ async def test_graph_counts_a_redelivered_turn_once() -> None:
         graph: Any = build_graph(deps, store=InMemoryStore())
         await _ask(graph, model, "ДИБ", "same-run")
         await _ask(graph, model, "ДИБ", "same-run")
-        model.responses = [guard()]
+        model.responses = [guard(), {"content": "УТОЧНЕНИЕ: Для какой области нужен ответ?"}]
         state = await graph.ainvoke(
             {"messages": [("human", "Кто назначает РП?")]}, config=_config("next")
         )
