@@ -92,7 +92,7 @@ async def test_delete_is_idempotent_and_scoped_to_the_authenticated_account(
     assert (await client.get("/me/memory", headers=alice)).json()["records"][0]["key"] == "area:ДИБ"
     assert (await client.delete(path, headers=alice)).status_code == 204
     assert (await client.delete(path, headers=alice)).status_code == 204
-    assert (await client.get("/me/memory", headers=alice)).json() == {"records": []}
+    assert (await client.get("/me/memory", headers=alice)).json()["records"] == []
 
 
 @pytest.mark.parametrize("method,path", [("GET", "/me/memory"), ("DELETE", "/me/memory/area:ДИБ")])
@@ -126,3 +126,44 @@ async def test_memory_routes_do_not_enable_direct_client_store_access(
         headers=_bearer(make_token(sub="alice")),
     )
     assert response.status_code == 403
+
+
+async def test_memory_shows_progress_and_signals_and_signals_can_be_cleared(
+    client: httpx.AsyncClient, make_token: MakeToken
+) -> None:
+    from aegra_api.core.database import db_manager
+    from regagent_backend.memory import MemoryService
+
+    memory = MemoryService(db_manager.get_store(), {"ДИБ", "ДБРЦТ", "общий"}, 3, 14)
+    await memory.observe("alice", "run-1", "ДБРЦТ")
+    alice = _bearer(make_token(sub="alice"))
+    body = (await client.get("/me/memory", headers=alice)).json()
+    progress = body["progress"]
+    assert progress["current"] == "ДИБ"
+    assert progress["days_until_stale"] in {13, 14}
+    assert (progress["pending_area"], progress["pending_count"], progress["pending_needed"]) == (
+        "ДБРЦТ",
+        1,
+        3,
+    )
+    assert [signal["area"] for signal in body["signals"]] == ["ДБРЦТ"]
+    assert "run_id" not in body["signals"][0]
+
+    path = "/me/memory/" + quote("signals:area", safe="")
+    assert (await client.delete(path, headers=alice)).status_code == 204
+    cleared = (await client.get("/me/memory", headers=alice)).json()
+    assert cleared["signals"] == [] and cleared["progress"]["pending_area"] is None
+
+
+async def test_qc_access_comes_from_the_aegra_identity(
+    client: httpx.AsyncClient, make_token: MakeToken
+) -> None:
+    guest = await client.get("/qc/me")
+    assert guest.status_code == 401
+    employee = await client.get("/qc/me?role=admin", headers=_bearer(make_token(sub="alice")))
+    assert employee.status_code == 200 and employee.json()["can_review"] is False
+    reviewer = await client.get(
+        "/qc/me", headers=_bearer(make_token(sub="admin", realm_access={"roles": ["admin"]}))
+    )
+    assert reviewer.status_code == 200 and reviewer.json()["can_review"] is True
+    assert reviewer.json()["areas"] == ["ДИБ", "ДБРЦТ", "общий"]

@@ -16,11 +16,12 @@ from regagent_common.access import AccessLevels
 
 from .api import AdminDeps, ApiDeps, create_app
 from .canary import check_isolation
-from .consumer import IndexQueue, run_consumer
+from .consumer import IndexQueue, run_consumer, run_practice_consumer
 from .lightrag_factory import build_lightrag, make_embedding_func, make_llm_func
 from .okf import OkfStore
 from .parsing import DoclingParser
 from .pipeline import PipelineDeps, recover_after_restart
+from .practice import PracticeService
 from .rag import RagRegistry
 from .registry import Registry
 from .reindex import queue_reindex
@@ -87,9 +88,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 DoclingParser(), okf, rag, registry, settings, levels=levels, tokenizer=tokenizer
             )
             async with IndexQueue(settings.rabbitmq_url.get_secret_value()) as queue:
+                practices = PracticeService(
+                    okf,
+                    registry,
+                    rag,
+                    fits_chunk=lambda text: (
+                        len(tokenizer.encode(text)) <= settings.chunk_max_tokens
+                    ),
+                )
+                await practices.review_changes(queue.publish)
                 ready = asyncio.Event()
                 async with asyncio.TaskGroup() as workers:
-                    consumer = workers.create_task(run_consumer(queue, indexing))
+                    consumer = workers.create_task(run_consumer(queue, indexing, practices))
+                    practice_consumer = workers.create_task(
+                        run_practice_consumer(
+                            queue,
+                            practices,
+                            retries=settings.index_max_retries,
+                            timeout_s=settings.index_job_timeout_s,
+                        )
+                    )
                     watcher = workers.create_task(
                         run_watcher(
                             settings.docs_dir,
@@ -111,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         search_top_k=settings.search_top_k,
                         rerank_candidate_limit=settings.rerank_candidate_limit,
                         rerank_text_max_chars=settings.rerank_text_max_chars,
+                        practices=practices,
                         admin=AdminDeps(
                             registry,
                             partial(
@@ -127,6 +146,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         app.state.deps = None
                         watcher.cancel()
                         consumer.cancel()
+                        practice_consumer.cancel()
         finally:
             await rag.stop()
 

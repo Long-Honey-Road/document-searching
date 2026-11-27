@@ -2,6 +2,8 @@ import { Client, type Message, type Thread } from '@langchain/langgraph-sdk'
 import { useStream } from '@langchain/langgraph-sdk/react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { MemoryPanel } from '../memory/MemoryPanel'
+import { EscalateQuestion } from '@/features/qc/EscalateQuestion'
 import { Answer, type AnswerMeta } from './Answer'
 import { classifyError, problemText, type ChatProblem } from './errors'
 
@@ -34,9 +36,10 @@ function ProblemAlert({ problem, onUnauthorized }: {
 }
 
 function Conversation({
-  client, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized,
+  client, token, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized,
 }: {
   client: Client
+  token: string
   assistantId: string
   threadId: string | null
   setThreadId: (id: string) => void
@@ -68,7 +71,7 @@ function Conversation({
     setSendError(null)
     setQuestion('')
     try {
-      await stream.submit({ messages: [{ type: 'human', content }] })
+      await stream.submit({ messages: [{ id: crypto.randomUUID(), type: 'human', content }] })
     } catch (error) {
       setQuestion(content)
       setSendError(classifyError(error))
@@ -82,9 +85,14 @@ function Conversation({
       )}
       <div className="space-y-4" aria-live="polite">
         {messages.map((message, index) => message.type === 'human' ? (
-          <p key={message.id ?? index} className="ml-auto max-w-prose whitespace-pre-wrap rounded-xl bg-primary px-4 py-3 text-primary-foreground">
-            {getText(message)}
-          </p>
+          <div key={message.id ?? index} className="ml-auto max-w-prose space-y-1 text-right">
+            <p className="whitespace-pre-wrap rounded-xl bg-primary px-4 py-3 text-left text-primary-foreground">
+              {getText(message)}
+            </p>
+            {message.id && getText(message).trim() && (
+              <EscalateQuestion token={token} question={getText(message)} submissionId={message.id} />
+            )}
+          </div>
         ) : (
           <Answer key={message.id ?? index} text={getText(message)} meta={getAnswerMeta(message)} />
         ))}
@@ -114,10 +122,12 @@ function Conversation({
 }
 
 export function Chat({ token, onUnauthorized }: { token: string; onUnauthorized: () => void }) {
+  const apiUrl = new URL(import.meta.env.VITE_API_URL || '/api', window.location.origin).href
   const client = useMemo(() => new Client({
-    apiUrl: new URL(import.meta.env.VITE_API_URL || '/api', window.location.origin).href,
+    apiUrl,
     defaultHeaders: { Authorization: 'Bearer ' + token },
-  }), [token])
+  }), [apiUrl, token])
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const [assistantId, setAssistantId] = useState<string>(import.meta.env.VITE_ASSISTANT_ID ?? '')
   const [threadId, setThreadId] = useState<string | null>(null)
   const [threads, setThreads] = useState<Thread[]>([])
@@ -148,6 +158,14 @@ export function Chat({ token, onUnauthorized }: { token: string; onUnauthorized:
     <div className="grid gap-8 sm:grid-cols-[12rem_minmax(0,1fr)]">
       <nav aria-label="Диалоги" className="space-y-3">
         <Button variant="outline" onClick={() => setThreadId(null)}>Новый диалог</Button>
+        <Button
+          variant={memoryOpen ? 'secondary' : 'ghost'}
+          aria-expanded={memoryOpen}
+          onClick={() => setMemoryOpen((open) => !open)}
+        >
+          Память
+        </Button>
+        {memoryOpen && <MemoryPanel apiUrl={apiUrl} token={token} refreshKey={threadUpdates} />}
         <ul className="space-y-1">
           {threads.map((thread) => (
             <li key={thread.thread_id}>
@@ -161,7 +179,7 @@ export function Chat({ token, onUnauthorized }: { token: string; onUnauthorized:
       <div className="min-w-0 space-y-3">
         {problem && <ProblemAlert problem={problem} onUnauthorized={onUnauthorized} />}
         {assistantId ? (
-          <Conversation {...{ client, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized }} />
+          <Conversation {...{ client, token, assistantId, threadId, setThreadId, reloadThreads, onUnauthorized }} />
         ) : !problem && (
           <p role="status" className="text-sm text-muted-foreground">Подключаюсь к агенту…</p>
         )}

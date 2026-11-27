@@ -423,3 +423,71 @@ def test_signed_in_probe_can_be_switched_off(tmp_path: Path, caplog) -> None:
     assert deploy["sign_in_probe_enabled"](env) is False
     assert deploy["sign_in_probe_enabled"]({}) is True
     assert deploy["sign_in_probe_enabled"]({"RELEASE_SIGN_IN_PROBE": "on"}) is True
+
+
+def _deploy_events(root: Path) -> list[dict[str, object]]:
+    path = root / "logs" / "events.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_accepted_release_is_a_deploy_event(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"good": "a" * 40}))
+    assert deploy["activate"](state, "b" * 40, lambda sha: True, lambda: None)
+    [event] = _deploy_events(tmp_path)
+    assert (event["service"], event["event"], event["status"]) == (
+        "deploy",
+        "deploy.decision",
+        "accepted",
+    )
+    assert (event["candidate"], event["previous"]) == ("b" * 40, "a" * 40)
+    assert isinstance(event["duration_ms"], int) and event["ts"].endswith("Z")
+
+
+def test_rejected_release_and_rollback_are_deploy_events(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"good": "a" * 40}))
+    assert not deploy["activate"](state, "b" * 40, lambda sha: sha == "a" * 40, lambda: None)
+    statuses = [(event["event"], event["status"]) for event in _deploy_events(tmp_path)]
+    assert statuses == [("deploy.decision", "rejected"), ("deploy.rollback", "ok")]
+
+
+def test_probe_accepts_empty_404_for_master_discovery(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+
+    d = deploy["Deployment"](tmp_path)
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "candidate.env").write_text("RELEASE_SIGN_IN_PROBE=off\n")
+    config = {
+        "services": {
+            "proxy": {
+                "environment": {"PUBLIC_BASE_URL": "https://regagent.example"},
+                "ports": [{"published": 18082}],
+            }
+        }
+    }
+    monkeypatch.setattr(
+        d,
+        "compose",
+        lambda *args, **kwargs: json.dumps(config) if args[1] == "config" else "doc\t1\n",
+    )
+    namespace = d.probe.__globals__
+    monkeypatch.setitem(namespace, "run", lambda *args, **kwargs: "doc\t1\n")
+    connections = []
+    for path, expected in namespace["PROBE_PATHS"]:
+        connection = MagicMock()
+        response = connection.getresponse.return_value
+        response.status = 404 if "master" in path or "/auth/admin" in path else min(expected)
+        response.read.return_value = (
+            json.dumps({"issuer": "https://regagent.example/auth/realms/regagent"}).encode()
+            if "/realms/regagent/" in path
+            else b""
+        )
+        connections.append(connection)
+    monkeypatch.setattr(
+        namespace["http"].client, "HTTPConnection", MagicMock(side_effect=connections)
+    )
+    d.probe("candidate")
+    for connection in connections:
+        connection.close.assert_called_once()

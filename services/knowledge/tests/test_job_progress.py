@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -193,3 +194,33 @@ async def test_reindex_failed_can_target_one_document(
     source = FolderSource(folder.path, LEVELS)
     assert await queue_reindex(source, registry, Publisher(), only_failed=True, doc_ids={"a"}) == 1
     assert [(job.doc_id, job.op) for job in published] == [("a", "upsert")]
+
+
+async def test_index_events_record_steps_and_job_result(
+    environment: tuple[Folder, PipelineDeps, Rag], capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder, deps, _ = environment
+    registry = MemoryJobs()
+    (job,) = await scan(folder.path, LEVELS, registry)
+    await _process_message(
+        cast(AbstractIncomingMessage, Message(job)), replace(deps, registry=registry)
+    )
+    lines = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
+    ]
+    steps = [line for line in lines if line["event"] == "index.step"]
+    names = [step["step"] for step in steps]
+    assert names[0] == "snapshot"
+    assert [
+        name for name in names if name in {"parse", "normalize", "okf", "index", "registry"}
+    ] == [
+        "parse",
+        "normalize",
+        "okf",
+        "index",
+        "registry",
+    ]
+    assert {step["status"] for step in steps} == {"ok"}
+    assert all(step["job_id"] == job.job_id and step["doc_id"] == "a" for step in steps)
+    [result] = [line for line in lines if line["event"] == "index.job"]
+    assert (result["status"], result["attempt"], result["op"]) == ("succeeded", 1, "upsert")

@@ -8,11 +8,30 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .fragments import Mode, is_header_value
+
 FragmentKind = Literal["regulation", "practice"]
 
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class PracticeBinding(_Model):
+    doc_id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    version: int = Field(ge=1)
+    clause: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _valid_clause(self) -> Self:
+        if not is_header_value(self.clause):
+            raise ValueError("некорректный номер пункта")
+        return self
+
+
+class PracticeSource(_Model):
+    mode: Mode
+    binds: list[PracticeBinding] = Field(min_length=1)
 
 
 # --- knowledge API ---
@@ -28,6 +47,7 @@ class Fragment(_Model):
     kind: FragmentKind
     text: str
     score: float
+    practice: PracticeSource | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class SearchRequest(_Model):
@@ -152,6 +172,55 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+PRACTICE_TEXT_MAX = 12000
+PRACTICE_BINDS_MAX = 16
+
+
+class PracticePublish(_Model):
+    message_id: str = Field(default_factory=_new_id)
+    created_at: datetime = Field(default_factory=_now)
+    type: Literal["practice.publish"] = "practice.publish"
+    ticket_id: str = Field(min_length=1)
+    practice_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$")
+    revision: int = Field(ge=1)
+    text: str = Field(min_length=1, max_length=PRACTICE_TEXT_MAX)
+    binds: list[PracticeBinding] = Field(min_length=1, max_length=PRACTICE_BINDS_MAX)
+    mode: Mode
+    approved_by: str = Field(min_length=1)
+    approved_levels: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _valid_content(self) -> Self:
+        if not self.text.strip() or "\x00" in self.text:
+            raise ValueError("пояснение пустое или содержит NUL")
+        if len({(b.doc_id, b.version, b.clause) for b in self.binds}) != len(self.binds):
+            raise ValueError("повторяющиеся привязки")
+        return self
+
+
+class PracticePublicationResult(_Model):
+    message_id: str = Field(default_factory=_new_id)
+    created_at: datetime = Field(default_factory=_now)
+    type: Literal["practice.published"] = "practice.published"
+    ticket_id: str
+    practice_id: str
+    revision: int
+    status: Literal["published", "failed"]
+    error_code: str | None = None
+
+
+class PracticeRecheck(_Model):
+    message_id: str
+    created_at: datetime = Field(default_factory=_now)
+    type: Literal["qc.events"] = "qc.events"
+    kind: Literal["recheck"] = "recheck"
+    ticket_id: str
+    practice_id: str
+    revision: int
+    doc_id: str
+    reason: Literal["new_version", "deleted", "access_changed", "content_changed"]
+
+
 class IndexJob(_Model):
     """Задача ``index.jobs``. Обработка идемпотентна по ``(doc_id, version, sha256)``."""
 
@@ -192,3 +261,43 @@ class AnswerMeta(_Model):
     area_source: Literal["memory", "question", "asked", "none"]
     sources: list[AnswerSource]
     outcome: Literal["answer", "refusal", "not_found", "ask_area", "fallback"]
+
+
+# --- итог хода для аналитики ОКК (стык B + C, план 28.11) ---
+
+TurnOutcome = Literal[
+    "answered",
+    "empty_search",
+    "unsupported",
+    "ask_area",
+    "refused",
+    "search_unavailable",
+    "model_timeout",
+    "error",
+]
+
+
+class TurnReport(_Model):
+    """Один итог хода по ``run_id``: что спросили, где искали, чем закончилось.
+
+    ``outcome``: ``answered`` — проверенный ответ; ``empty_search`` — поиск ничего не нашёл;
+    ``unsupported`` — материалы нашлись, но ответ не прошёл проверку или выдача слабая;
+    ``ask_area`` — агент уточняет область; ``refused`` — отказ (не по теме, лимит…);
+    ``search_unavailable`` — knowledge не ответил; ``model_timeout`` — таймаут модели;
+    ``error`` — прочие сбои. Ограничения доступа отдельным исходом не различаются:
+    поиск не сообщает, что отфильтровал по правам, и пустая выдача не говорит о закрытых
+    документах. ``question`` — текст вопроса: только в хранилище аналитики, не в журнал."""
+
+    run_id: str
+    thread_id: str | None
+    user_sub: str
+    at: datetime
+    question: str
+    area: str | None
+    area_source: Literal["memory", "question", "asked", "none"]
+    outcome: TurnOutcome
+    reason: str | None
+    fragments: list[str]
+    cited: list[str]
+    practice_used: bool
+    searches: int

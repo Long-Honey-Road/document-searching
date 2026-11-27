@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 import yaml
 from git import Repo
+from regagent_common.contracts import PracticePublish, PracticeRecheck
 
 from .manifest import ManifestEntry
 from .normalize import Clause, render_markdown, split_clauses
@@ -21,6 +22,18 @@ from .references import DocumentReferences
 RegulationStatus = Literal["active", "deprecated", "deleted"]
 _DOC_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _REVISION = re.compile(r"v([1-9]\d*)\.md\Z")
+_PRACTICE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\Z")
+
+
+@dataclass(frozen=True)
+class PracticeRecord:
+    command: PracticePublish
+    status: Literal["pending", "active", "review"]
+    level: str
+    binding_areas: dict[str, list[str]]
+    hashes: dict[str, str]
+    recheck: PracticeRecheck | None = None
+    recheck_sent: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +89,59 @@ class OkfStore:
         with self._lock:
             self.root.mkdir(parents=True, exist_ok=True)
             self._repo = Repo.init(self.root)
+
+    def read_practice(self, practice_id: str) -> PracticeRecord | None:
+        if not _PRACTICE_ID.fullmatch(practice_id):
+            return None
+        with self._lock:
+            path = self.root / "practice" / f"{practice_id}.md"
+            if not path.is_file():
+                return None
+            row = _load_revision(path)
+            command = PracticePublish.model_validate({**row.meta["publication"], "text": row.body})
+            if command.practice_id != practice_id:
+                return None
+            return PracticeRecord(
+                command,
+                row.meta["status"],
+                row.meta["level"],
+                row.meta["binding_areas"],
+                row.meta["hashes"],
+                PracticeRecheck.model_validate(row.meta["recheck"])
+                if row.meta.get("recheck")
+                else None,
+                row.meta.get("recheck_sent", False),
+            )
+
+    def practices(self) -> list[PracticeRecord]:
+        with self._lock:
+            return [
+                record
+                for path in sorted((self.root / "practice").glob("*.md"))
+                if (record := self.read_practice(path.stem)) is not None
+            ]
+
+    def write_practice(self, record: PracticeRecord) -> None:
+        command = record.command
+        path = self.root / "practice" / f"{command.practice_id}.md"
+        with self._lock:
+            _Revision(
+                path,
+                {
+                    "type": "practice",
+                    "status": record.status,
+                    "level": record.level,
+                    "binding_areas": record.binding_areas,
+                    "hashes": record.hashes,
+                    "publication": command.model_dump(mode="json", exclude={"text"}),
+                    "recheck": record.recheck.model_dump(mode="json") if record.recheck else None,
+                    "recheck_sent": record.recheck_sent,
+                },
+                command.text,
+            ).write()
+            self._commit(
+                [path], f"practice {command.practice_id}@{command.revision}: {record.status}"
+            )
 
     def _commit(self, paths: list[Path], message: str) -> None:
         repo = self._repo

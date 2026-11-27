@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ from pydantic import SecretStr
 from regagent_backend.graph import AgentDeps, build_graph
 from regagent_backend.knowledge_client import KnowledgeClient
 from regagent_backend.settings import BackendSettings
+from regagent_backend.usage import UsageCallback
 from regagent_common.contracts import AnswerMeta, Fragment, SearchResponse
 
 CONFIG: RunnableConfig = {
@@ -95,8 +97,9 @@ def search(number: int = 1) -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
+@asynccontextmanager
+async def stand_parts() -> AsyncIterator[tuple[Model, AgentDeps, list[dict[str, Any]]]]:
+    """Подставные модель и knowledge и зависимости агента; граф собирает вызывающий."""
     model = Model()
     lookups: list[dict[str, Any]] = []
 
@@ -133,6 +136,7 @@ async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
             api_key=SecretStr("fake"),
             http_async_client=transport,
             disable_streaming=True,
+            callbacks=[UsageCallback("agent")],
         )
         deps = AgentDeps(
             settings,
@@ -140,6 +144,12 @@ async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
             chat,
             KnowledgeClient("http://knowledge", "internal", knowledge_http),
         )
+        yield model, deps, lookups
+
+
+@pytest.fixture
+async def stand() -> AsyncIterator[tuple[Model, Any, list[dict[str, Any]]]]:
+    async with stand_parts() as (model, deps, lookups):
         yield model, build_graph(deps, store=InMemoryStore()), lookups
 
 
@@ -190,6 +200,13 @@ async def test_clarification_semantic_area_memory_and_tool_allowlist(stand: Any)
     prompt = model.requests[-1]["messages"][0]["content"]
     assert "каждое утверждение" in prompt.lower()
     assert "closed_fin" not in prompt
+
+    # Один сигнал (ответ на уточнение) ещё не память: нужен второй (D-55)
+    model.responses = [guard()]
+    unscoped = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
+    assert meta(unscoped["messages"][-1]).outcome == "ask_area"
+    model.responses = [guard("ДИБ"), search(), answer]
+    await graph.ainvoke({"messages": [("human", "Кто назначает РП в ДИБ?")]}, config=CONFIG)
 
     model.responses = [guard(), search(), answer]
     remembered = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
