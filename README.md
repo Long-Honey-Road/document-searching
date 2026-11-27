@@ -28,6 +28,8 @@ uv run pytest                   # unit-тесты
 docker compose -f deploy/compose.yaml --env-file .env up -d
 ```
 
+Проверка и развёртывание на машине стенда, что сейчас готово и чего ждать — `deploy/RUNBOOK.md`. Журнал последнего мержа — `dev_docs/merge-log-2026-11-27.md`.
+
 Все настраиваемые параметры — в `.env` (список: `dev_docs/06-contracts.md#переменные-env`). Новые зависимости — `uv add <пакет>`.
 
 ## Правила
