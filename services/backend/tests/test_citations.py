@@ -13,6 +13,7 @@ def test_unknown_or_malformed_citations_fail_even_with_valid_sources() -> None:
     assert not verify_citations("Срок [f:a@1#2.1] [f:unknown]", {"a@1#2.1"}).ok
     assert not verify_citations("Срок [f:a@1#2.1] [f:bad id]", {"a@1#2.1"}).ok
     assert not verify_citations("Срок — 1 день.", {"a@1#2.1"}).ok
+    assert verify_citations("Срок [f:a@1#2.1] [f:bad id]", {"a@1#2.1"}).malformed
 
 
 def test_public_text_removes_reasoning_and_incomplete_think_blocks() -> None:

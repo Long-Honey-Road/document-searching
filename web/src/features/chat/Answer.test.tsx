@@ -28,6 +28,11 @@ test('shows the chosen area', () => {
   expect(screen.getByText('Область: ДИБ')).toBeInTheDocument()
 })
 
+test('marks a fallback as a technical message', () => {
+  render(<Answer text="Не удалось надёжно ответить по регламентам." meta={{ ...meta, outcome: 'fallback', sources: [] }} />)
+  expect(screen.getByText('Техническое сообщение')).toBeInTheDocument()
+})
+
 test('replaces the draft and only links verified citations', () => {
   const { rerender } = render(<Answer text="Черновик [f:dib@3#2.7]." />)
   expect(screen.getByText(/Черновик/)).toBeInTheDocument()

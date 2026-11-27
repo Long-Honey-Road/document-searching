@@ -33,6 +33,7 @@ from regagent_common.contracts import (
     AnswerMeta,
     AnswerOutcome,
     AnswerSource,
+    ClauseRequest,
     TurnOutcome,
     TurnReport,
 )
@@ -65,12 +66,12 @@ from regagent_backend.dialogue import (
 from regagent_backend.events import events, run_fields
 from regagent_backend.guard import PROMPTS, GuardResult, classify
 from regagent_backend.identity import UserIdentity, current_identity, identity_to_user_dict
-from regagent_backend.knowledge_client import KnowledgeClient
+from regagent_backend.knowledge_client import KnowledgeClient, KnowledgeUnavailable
 from regagent_backend.memory import MemoryService, build_memory_tools, memory_service
 from regagent_backend.qc_turn_sink import QcTurnSink
 from regagent_backend.rate_limit import AccountRateLimit
 from regagent_backend.settings import BackendSettings
-from regagent_backend.tools import SearchRun, build_search_tools
+from regagent_backend.tools import SearchRun, build_search_tools, parse_fragment_id
 from regagent_backend.usage import UsageCallback
 
 log = logging.getLogger(__name__)
@@ -264,6 +265,41 @@ def _reply_with_sources(
     return _reply(text, "answer", area=area, area_source=source, sources=sources)
 
 
+async def _hydrate_citations(
+    citations: list[str], run: SearchRun, knowledge: KnowledgeClient, identity: UserIdentity
+) -> int:
+    """Дочитать пункт уже найденного документа, если модель сослалась на его точный ID."""
+    unknown = [citation for citation in citations if citation not in run.fragments]
+    if len(unknown) > 8:
+        return 0
+    searched_docs = {
+        (fragment.doc_id, fragment.version)
+        for fragment in run.fragments.values()
+        if fragment.kind == "regulation"
+    }
+    hydrated = 0
+    for citation in unknown:
+        parsed = parse_fragment_id(citation)
+        if parsed is None or parsed[:2] not in searched_docs:
+            continue
+        doc_id, version, clause = parsed
+        try:
+            response = await knowledge.clause(
+                ClauseRequest(
+                    doc_id=doc_id,
+                    version=version,
+                    clause=clause,
+                    levels=sorted(identity.levels),
+                )
+            )
+        except KnowledgeUnavailable:
+            continue
+        if response is not None and response.fragment.fragment_id == citation:
+            run.fragments[citation] = response.fragment
+            hydrated += 1
+    return hydrated
+
+
 async def _answer(
     deps: AgentDeps,
     identity: UserIdentity,
@@ -356,8 +392,26 @@ async def _answer(
             break
         answer = last_answer(history)
         text = public_text(answer) if answer is not None else ""
+        hydrated_count = 0
+        if "[f:" in text and not any(line.strip() == NO_ANSWER for line in text.splitlines()):
+            hydrated_count = await _hydrate_citations(
+                extract_citations(text), run, deps.knowledge, identity
+            )
         citations = verify_citations(text, set(run.fragments))
-        if text == NO_ANSWER:
+        events.emit_fields(
+            "answer.citations_check",
+            {
+                "attempt": attempt + 1,
+                "cited_count": len(extract_citations(text)),
+                "unknown_count": len(citations.unknown),
+                "hydrated_count": hydrated_count,
+                "malformed": citations.malformed,
+                "missing": citations.has_claims_without_citations,
+                **ids,
+            },
+            status="ok" if citations.ok else "rejected",
+        )
+        if any(line.strip() == NO_ANSWER for line in text.splitlines()):
             return _unanswered(run), run
         if clarification := parse_clarification(text):
             if not areas and asks_for_area(clarification):
@@ -373,7 +427,7 @@ async def _answer(
         overridden = missing_overrides(text, run.fragments) if supported else []
         if overridden:
             supported, reason = False, "practice_not_cited"
-        if supported and needs_evidence_review(text):
+        if supported and (needs_evidence_review(text) or hydrated_count > 0):
             try:
                 with events.timed("answer.evidence_check", **ids) as event:
                     review = await review_evidence(

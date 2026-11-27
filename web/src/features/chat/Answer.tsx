@@ -3,6 +3,7 @@ import Markdown from 'react-markdown'
 
 export type AnswerMeta = {
   verified: true
+  outcome: 'answer' | 'refusal' | 'not_found' | 'ask_area' | 'ask_clarification' | 'qc_help' | 'fallback'
   area_used?: string | null
   area_source?: 'memory' | 'question' | 'asked' | 'none'
   sources: readonly {
@@ -38,6 +39,9 @@ export function Answer({ text, meta }: { text: string; meta?: AnswerMeta }) {
 
   return (
     <article className="space-y-4 rounded-xl border bg-card p-4 text-sm leading-relaxed sm:p-5">
+      {meta?.outcome === 'fallback' && (
+        <p className="font-semibold text-destructive">Техническое сообщение</p>
+      )}
       {meta?.area_used && (
         <p className="font-medium text-muted-foreground">
           Область: {meta.area_used}

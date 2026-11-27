@@ -33,6 +33,7 @@ class CitationCheck:
     ok: bool
     unknown: list[str]
     has_claims_without_citations: bool
+    malformed: bool
 
 
 class ComparisonSupport(BaseModel):
@@ -57,7 +58,9 @@ def verify_citations(text: str, seen: set[str]) -> CitationCheck:
     unknown = [citation for citation in citations if citation not in seen]
     malformed = "[f:" in _CITATION.sub("", text)
     missing = bool(text.strip()) and not citations
-    return CitationCheck(bool(citations) and not (unknown or malformed), unknown, missing)
+    return CitationCheck(
+        bool(citations) and not (unknown or malformed), unknown, missing, malformed
+    )
 
 
 def missing_overrides(text: str, fragments: Mapping[str, Fragment]) -> list[str]:

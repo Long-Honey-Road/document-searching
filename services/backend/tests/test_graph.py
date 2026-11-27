@@ -14,7 +14,7 @@ from regagent_backend.graph import AgentDeps, build_graph
 from regagent_backend.knowledge_client import KnowledgeClient
 from regagent_backend.settings import BackendSettings
 from regagent_backend.usage import UsageCallback
-from regagent_common.contracts import AnswerMeta, Fragment, SearchResponse
+from regagent_common.contracts import AnswerMeta, ClauseResponse, Fragment, SearchResponse
 
 CONFIG: RunnableConfig = {
     "configurable": {
@@ -41,6 +41,7 @@ class Model:
         self.responses: list[Any] = []
         self.requests: list[dict[str, Any]] = []
         self.fragments = [PUNKT]
+        self.clauses: list[Fragment] = []
         self.search_status = 200
 
     async def request(self, request: httpx.Request) -> httpx.Response:
@@ -111,6 +112,21 @@ async def stand_parts() -> AsyncIterator[tuple[Model, AgentDeps, list[dict[str, 
         params = json.loads(request.content)
         assert params["levels"] == ["public"]
         lookups.append(params)
+        if request.url.path == "/clause":
+            fragment = next(
+                (
+                    item
+                    for item in model.clauses
+                    if (item.doc_id, item.version, item.clause)
+                    == (params["doc_id"], params["version"], params["clause"])
+                ),
+                None,
+            )
+            if fragment is None:
+                return httpx.Response(404)
+            return httpx.Response(
+                200, json=ClauseResponse(fragment=fragment, neighbors=[]).model_dump()
+            )
         if model.search_status != 200:
             return httpx.Response(model.search_status)
         response = SearchResponse(
@@ -221,7 +237,7 @@ async def test_clarification_semantic_area_memory_and_tool_allowlist(stand: Any)
     assert "недавние области:" in model.requests[-1]["messages"][0]["content"].lower()
 
 
-async def test_bad_citation_retries_once_then_fallback(stand: Any) -> None:
+async def test_bad_citation_retries_once_then_fallback(stand: Any, capsys: Any) -> None:
     model, graph, _ = stand
     wrong = {"content": "Срок два дня [f:x@1#1]."}
     model.responses = [guard("ДИБ"), search(), wrong, wrong]
@@ -231,6 +247,109 @@ async def test_bad_citation_retries_once_then_fallback(stand: Any) -> None:
     assert len(model.requests) == 4
     assert len(state["messages"]) == 2
     assert "два дня" not in reply.content
+    checks = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if '"event":"answer.citations_check"' in line
+    ]
+    assert len(checks) == 2
+    assert all(check["status"] == "rejected" and check["unknown_count"] == 1 for check in checks)
+    assert all("два дня" not in json.dumps(check) for check in checks)
+
+
+async def test_existing_cited_clause_outside_search_top_k_is_checked_and_answered(
+    stand: Any,
+) -> None:
+    model, graph, lookups = stand
+    model.fragments = [
+        PUNKT.model_copy(
+            update={
+                "fragment_id": "dib-project-activity@1#2",
+                "clause": "2",
+                "text": "Раздел 2. Назначение руководителя проекта.",
+            }
+        )
+    ]
+    model.clauses = [PUNKT]
+    model.responses = [
+        guard("ДИБ"),
+        {
+            "content": (
+                "Координатор назначает РП за один рабочий день [f:dib-project-activity@1#2.7]."
+            )
+        },
+        {"content": '{"outcome":"answer","question":null}'},
+    ]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Кто назначает РП в ДИБ и за какой срок?")]}, config=CONFIG
+    )
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "answer"
+    assert meta(reply).sources[0].fragment_id == PUNKT.fragment_id
+    assert any("doc_id" in lookup and lookup["clause"] == "2.7" for lookup in lookups)
+    assert PUNKT.text in model.requests[-1]["messages"][1]["content"]
+
+
+async def test_unavailable_clause_cannot_become_a_source(stand: Any) -> None:
+    model, graph, lookups = stand
+    model.fragments = [
+        PUNKT.model_copy(
+            update={
+                "fragment_id": "dib-project-activity@1#2",
+                "clause": "2",
+            }
+        )
+    ]
+    draft = {"content": "Срок два дня [f:dib-project-activity@1#2.8]."}
+    model.responses = [guard("ДИБ"), draft, draft]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Какой срок назначения РП в ДИБ?")]}, config=CONFIG
+    )
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "fallback"
+    assert not meta(reply).sources
+    assert len([lookup for lookup in lookups if lookup.get("clause") == "2.8"]) == 2
+
+
+async def test_loaded_clause_still_needs_evidence_for_the_claim(stand: Any) -> None:
+    model, graph, _ = stand
+    model.fragments = [
+        PUNKT.model_copy(
+            update={
+                "fragment_id": "dib-project-activity@1#2",
+                "clause": "2",
+            }
+        )
+    ]
+    model.clauses = [PUNKT]
+    model.responses = [
+        guard("ДИБ"),
+        {"content": "Срок два дня [f:dib-project-activity@1#2.7]."},
+        {"content": '{"outcome":"not_found","question":null}'},
+    ]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Какой срок назначения РП в ДИБ?")]}, config=CONFIG
+    )
+    assert meta(state["messages"][-1]).outcome == "not_found"
+    assert not meta(state["messages"][-1]).sources
+
+
+async def test_mixed_no_answer_marker_is_not_published_as_answer(stand: Any) -> None:
+    model, graph, _ = stand
+    model.responses = [
+        guard("ДИБ"),
+        {
+            "content": (
+                "Сотрудник сообщает об инциденте [f:dib-project-activity@1#2.7].\n\nНЕТ_ОТВЕТА"
+            )
+        },
+    ]
+    state = await graph.ainvoke(
+        {"messages": [("human", "Как сообщить об инциденте в ДИБ?")]}, config=CONFIG
+    )
+    reply = state["messages"][-1]
+    assert meta(reply).outcome == "not_found"
+    assert "НЕТ_ОТВЕТА" not in reply.text
 
 
 @pytest.mark.leak
@@ -327,6 +446,16 @@ async def test_off_topic_refusal_does_not_search(stand: Any) -> None:
     assert meta(state["messages"][-1]).outcome == "refusal"
     assert not lookups
     assert len(model.requests) == 1
+
+
+async def test_guard_prompt_includes_customer_worded_regulation_questions(stand: Any) -> None:
+    model, graph, _ = stand
+    model.responses = [guard(on_topic=False)]
+    await graph.ainvoke(
+        {"messages": [("human", "Оплата прошла, а ключ не пришёл. Что делать?")]}, config=CONFIG
+    )
+    prompt = model.requests[0]["messages"][0]["content"]
+    assert "ключ не пришёл после оплаты" in prompt
 
 
 async def test_account_limit_applies_before_provider_calls(stand: Any) -> None:
