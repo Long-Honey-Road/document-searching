@@ -10,11 +10,14 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import SecretStr
 from regagent_common.contracts import (
     ClauseRequest,
     ClauseResponse,
+    DocumentRef,
     Fragment,
+    RefsRequest,
+    RefsResponse,
     SearchRequest,
     SearchResponse,
 )
@@ -63,25 +66,6 @@ class ApiDeps:
     search_top_k: int = DEFAULT_SEARCH_TOP_K
     rerank_candidate_limit: int = DEFAULT_RERANK_CANDIDATE_LIMIT
     rerank_text_max_chars: int = DEFAULT_RERANK_TEXT_MAX_CHARS
-
-
-class RefsRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    doc_id: str
-    levels: list[str]
-
-
-class DocumentRef(BaseModel):
-    doc_id: str
-    title: str
-    clause: str
-    via: str
-
-
-class RefsResponse(BaseModel):
-    outgoing: list[DocumentRef]
-    incoming: list[DocumentRef]
 
 
 def _deps(app: FastAPI) -> ApiDeps:

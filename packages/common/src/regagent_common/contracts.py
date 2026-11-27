@@ -56,6 +56,26 @@ class ClauseResponse(_Model):
     neighbors: list[Fragment]
 
 
+class RefsRequest(_Model):
+    doc_id: str
+    levels: list[str]
+
+
+class DocumentRef(_Model):
+    """Ссылка между документами из OKF (`links`): ``clause`` — пункт, где упомянут документ,
+    ``via`` — упоминание как в тексте."""
+
+    doc_id: str
+    title: str
+    clause: str
+    via: str
+
+
+class RefsResponse(_Model):
+    outgoing: list[DocumentRef]
+    incoming: list[DocumentRef]
+
+
 class Area(_Model):
     """Запись справочника областей (секция ``areas:`` манифеста)."""
 

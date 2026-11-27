@@ -184,7 +184,7 @@ async def test_clarification_semantic_area_memory_and_tool_allowlist(stand: Any)
     assert lookups[-1]["areas"] == ["ДИБ"]
     assert all(
         {tool["function"]["name"] for tool in request.get("tools", [])}
-        <= {"search_docs", "read_clause"}
+        <= {"search_docs", "read_clause", "follow_refs"}
         for request in model.requests
     )
     prompt = model.requests[-1]["messages"][0]["content"]

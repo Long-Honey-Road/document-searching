@@ -33,7 +33,7 @@
 
 ### `POST /refs`
 
-`{"doc_id", "levels"}` → `{"outgoing": [{"doc_id", "title", "clause", "via"}], "incoming": [...]}` — только доступные.
+`{"doc_id", "levels"}` → `{"outgoing": [{"doc_id", "title", "clause", "via"}], "incoming": [...]}` — только доступные. Модели — `RefsRequest`, `RefsResponse`, `DocumentRef` в `regagent_common.contracts`. `clause` — пункт документа-источника, где упомянут целевой документ. Нет документа или нет прав → 404.
 
 ### Служебные (`/admin/...`)
 

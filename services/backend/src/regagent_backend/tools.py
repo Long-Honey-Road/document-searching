@@ -7,7 +7,14 @@ from dataclasses import dataclass, field
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
-from regagent_common.contracts import ClauseRequest, Fragment, SearchRequest, SearchResponse
+from regagent_common.contracts import (
+    ClauseRequest,
+    DocumentRef,
+    Fragment,
+    RefsRequest,
+    SearchRequest,
+    SearchResponse,
+)
 
 from regagent_backend.identity import current_identity
 from regagent_backend.knowledge_client import KnowledgeClient, KnowledgeUnavailable
@@ -46,6 +53,28 @@ def _show_fragments(
         run.fragments[fragment.fragment_id] = fragment
         remaining -= len(block) + 2
     return "\n\n".join([*blocks, *([note] if note else [])])
+
+
+_NO_REFS = "Связанных документов нет."
+
+
+def _show_refs(outgoing: list[DocumentRef], incoming: list[DocumentRef], max_chars: int) -> str:
+    sections = (
+        ("Этот документ ссылается на:", outgoing, "в п. {clause} — «{title}» ({doc_id})"),
+        ("На этот документ ссылаются:", incoming, "«{title}» ({doc_id}), п. {clause}"),
+    )
+    lines: list[str] = []
+    remaining = max_chars
+    for header, refs, template in sections:
+        if not refs:
+            continue
+        entries = [template.format(**ref.model_dump()) for ref in refs]
+        for line in [header, *(f"- {entry}" for entry in entries)]:
+            if len(line) + 1 > remaining:
+                return "\n".join(lines)
+            lines.append(line)
+            remaining -= len(line) + 1
+    return "\n".join(lines)
 
 
 def build_search_tools(
@@ -116,4 +145,21 @@ def build_search_tools(
             or "Пункт не помещается в допустимый размер."
         )
 
-    return [search_docs, read_clause]
+    @tool
+    async def follow_refs(doc_id: str, config: RunnableConfig) -> str:
+        """Связанные регламенты: на какие документы ссылается этот и какие ссылаются на него.
+        doc_id — код документа или полный id фрагмента."""
+        target = parse_fragment_id(doc_id.strip())
+        code = target[0] if target else doc_id.strip()
+        if not code or _PRACTICE_ID.fullmatch(code):
+            return _NO_REFS
+        identity = current_identity(config)
+        try:
+            response = await client.refs(RefsRequest(doc_id=code, levels=sorted(identity.levels)))
+        except KnowledgeUnavailable:
+            return "Поиск временно недоступен."
+        if response is None:
+            return _NO_REFS
+        return _show_refs(response.outgoing, response.incoming, result_max_chars) or _NO_REFS
+
+    return [search_docs, read_clause, follow_refs]

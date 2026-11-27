@@ -6,7 +6,14 @@ import logging
 
 import httpx
 from pydantic import ValidationError
-from regagent_common.contracts import ClauseRequest, ClauseResponse, SearchRequest, SearchResponse
+from regagent_common.contracts import (
+    ClauseRequest,
+    ClauseResponse,
+    RefsRequest,
+    RefsResponse,
+    SearchRequest,
+    SearchResponse,
+)
 
 log = logging.getLogger(__name__)
 
@@ -44,3 +51,17 @@ class KnowledgeClient:
         except (httpx.HTTPError, ValidationError) as exc:
             log.warning("knowledge clause unavailable: %s", type(exc).__name__)
             raise KnowledgeUnavailable("clause unavailable") from exc
+
+    async def refs(self, request: RefsRequest) -> RefsResponse | None:
+        """Связанные документы; ``None`` — документа нет или он недоступен (одинаково)."""
+        try:
+            response = await self.http.post(
+                self.base_url + "/refs", json=request.model_dump(), headers=self.headers
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return RefsResponse.model_validate_json(response.content)
+        except (httpx.HTTPError, ValidationError) as exc:
+            log.warning("knowledge refs unavailable: %s", type(exc).__name__)
+            raise KnowledgeUnavailable("refs unavailable") from exc

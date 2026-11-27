@@ -5,8 +5,11 @@ from regagent_common.contracts import (
     Area,
     ClauseRequest,
     ClauseResponse,
+    DocumentRef,
     Fragment,
     IndexJob,
+    RefsRequest,
+    RefsResponse,
     SearchRequest,
     SearchResponse,
 )
@@ -138,3 +141,15 @@ def test_answer_meta_accepts_area_clarification() -> None:
         verified=True, area_used=None, area_source="none", sources=[], outcome="ask_area"
     )
     assert meta.outcome == "ask_area"
+
+
+def test_refs_request_and_response() -> None:
+    req = RefsRequest.model_validate({"doc_id": "subcontract", "levels": ["public"]})
+    assert req.levels == ["public"]
+    with pytest.raises(ValidationError):
+        RefsRequest.model_validate({"doc_id": "x", "levels": [], "user": "someone"})
+    ref = {"doc_id": "margin", "title": "Регламент контроля маржинальности", "clause": "2.3"}
+    resp = RefsResponse.model_validate(
+        {"outgoing": [{**ref, "via": "регламентом контроля маржинальности"}], "incoming": []}
+    )
+    assert resp.outgoing == [DocumentRef(**ref, via="регламентом контроля маржинальности")]
