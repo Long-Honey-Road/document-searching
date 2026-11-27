@@ -11,12 +11,15 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --packag
 COPY packages/common ./packages/common
 COPY services/knowledge ./services/knowledge
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-editable --package regagent-knowledge
+# Словарь tiktoken — в образ: без него LightRAG качает его при первом запуске (D-31)
+RUN /app/.venv/bin/lightrag-download-cache --tiktoken --cache-dir /app/tiktoken_cache
 
 FROM python:3.12-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends git libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 TIKTOKEN_CACHE_DIR=/app/tiktoken_cache
 COPY --from=build /app/.venv /app/.venv
+COPY --from=build /app/tiktoken_cache /app/tiktoken_cache
 COPY config/access_levels.yaml /app/config/access_levels.yaml
 CMD ["uvicorn", "regagent_knowledge.main:app", "--host", "0.0.0.0", "--port", "8000"]
