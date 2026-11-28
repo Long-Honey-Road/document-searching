@@ -641,7 +641,12 @@ async def test_clarifies_missing_detail_and_keeps_the_original_question(stand: A
     assert "Открытый проект" in lookups[-1]["query"]
 
 
-async def test_missing_answer_offers_qc_and_drafts_only_on_request(stand: Any) -> None:
+@pytest.mark.parametrize(
+    "send_request", ["Передай заявку сам.", "Тогда отправь её сам, пожалуйста."]
+)
+async def test_missing_answer_offers_qc_and_drafts_only_on_request(
+    stand: Any, send_request: str
+) -> None:
     model, graph, lookups = stand
     question = "В ДИБ есть компенсация парковки при удалённой работе?"
     model.responses = [guard("ДИБ"), {"content": "НЕТ_ОТВЕТА"}]
@@ -667,7 +672,7 @@ async def test_missing_answer_offers_qc_and_drafts_only_on_request(stand: Any) -
     guide_guard = {**draft_guard, "qc_action": "guide"}
     model.responses = [{"content": json.dumps(guide_guard)}]
     third = await graph.ainvoke(
-        {"messages": [*second["messages"], ("human", "Передай заявку сам.")]}, config=CONFIG
+        {"messages": [*second["messages"], ("human", send_request)]}, config=CONFIG
     )
     guidance = third["messages"][-1]
     assert meta(guidance).outcome == "qc_help"
