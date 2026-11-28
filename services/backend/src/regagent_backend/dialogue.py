@@ -29,6 +29,11 @@ _AREA_QUESTION = re.compile(
     r"(?:област\w*|дирекци\w*|департамент\w*|подразделени\w*)\b",
     re.IGNORECASE,
 )
+_AREA_OR = re.compile(r"\bили\b", re.IGNORECASE)
+_COMMON_AREA_OPTION = re.compile(
+    r"\bобщ(?:ий|его|ему|им|ем|ие|их|ими)\s+(?:регламент|поряд|правил)\w*\b",
+    re.IGNORECASE,
+)
 _QC_MENTION = re.compile(r"\b(?:окк|(?:служб|отдел)\w*\s+(?:контроля\s+)?качества)\b", re.I)
 _QC_ACTION = re.compile(
     r"\b(?:черновик\w*|составь|оформи|напиши|передай|отправь|подай|"
@@ -50,8 +55,22 @@ def qc_requested(question: str, *, after_qc_help: bool) -> bool:
     )
 
 
-def asks_for_area(question: str) -> bool:
-    return bool(_AREA_QUESTION.search(question))
+def asks_for_area(question: str, area_codes: Sequence[str]) -> bool:
+    if _AREA_QUESTION.search(question):
+        return True
+    parts = _AREA_OR.split(question, maxsplit=1)
+    if len(parts) != 2:
+        return False
+    left, right = (
+        {
+            code
+            for code in area_codes
+            if re.search(rf"\b{re.escape(code)}\b", part, re.IGNORECASE)
+            or (code == "общий" and _COMMON_AREA_OPTION.search(part))
+        }
+        for part in parts
+    )
+    return bool(left - right and right - left)
 
 
 def parse_clarification(text: str) -> str | None:
