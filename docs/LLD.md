@@ -186,7 +186,7 @@ missing_links: [{clause: "4.4", via: "…"}]
 | `agent` | Создание Deep Agent, генерация ответа |
 | `tools` | `search_docs`, `read_clause`, `follow_refs`, учёт фрагментов запуска |
 | `citations` | Проверка ссылок, дочитывание пунктов, правило практики `overrides`, сравнение областей |
-| `dialogue` | Контекст диалога: последние 6 вопросов пользователя |
+| `dialogue` | Контекст уточнений и обработка явных просьб об ОКК |
 | `memory` | Память об области и сигналы |
 | `knowledge_client` | HTTP-клиент knowledge с сервисным токеном |
 | `rate_limit` | Лимит запросов на учётку в минуту |
@@ -232,7 +232,7 @@ flowchart TB
   refuse & ask & detail & qchelp & noanswer & fallback & post --> done([finalize])
 ```
 
-**Лимиты.** `RATE_LIMIT_PER_USER_PER_MIN` — счётчик в памяти процесса, сбрасывается при перезапуске. `QUESTION_MAX_CHARS` — длина вопроса. Модели передаются последние 6 вопросов пользователя в диалоге, без ответов агента.
+**Лимиты.** `RATE_LIMIT_PER_USER_PER_MIN` — счётчик в памяти процесса, сбрасывается при перезапуске. `QUESTION_MAX_CHARS` ограничивает длину вопроса. Guard получает текущую реплику и до пяти предыдущих реплик в отдельных полях. Deep Agent получает текущую реплику и относящиеся к ней вопросы при продолжении темы. Ответы и результаты поиска прошлых ходов в генерацию не передаются.
 
 **guard** — один вызов модели, формат `GUARD_MODE` (`json_schema` или `tool`). Поля ответа:
 
@@ -241,14 +241,17 @@ flowchart TB
 | `on_topic`, `injection`, `partial_topic` | По теме ли вопрос, есть ли попытка взлома промпта. Смешанный запрос получает отказ целиком |
 | области | Явно названные области, коды из `AREA_CODES` (D-20) |
 | `memory_action` | `remember`, `forget` или `none` |
-| поисковые запросы | До двух, если в сообщении два самостоятельных вопроса |
+| поисковые запросы | До двух для частей текущего сообщения или отдельный запрос для продолжения темы |
 | `missing_detail` | Текст конкретного уточнения |
 | `area_only` | Реплика только называет область |
-| `qc_action` | Инструкция или черновик для ОКК по просьбе сотрудника |
+| `topic_relation` | Самостоятельный запрос, продолжение темы или неопределённая связь |
+| `qc_action` | Инструкция или черновик для ОКК. Граф дополнительно проверяет, что текущая реплика содержит просьбу об ОКК либо короткую просьбу отправить заявку сразу после подсказки |
 
 Короткое указание области после неудачного ответа продолжает исходный вопрос с фильтром (D-63, D-64).
 
-**Область.** Явная в вопросе (`area_source=question`), из ответа на уточнение (`asked`), из свежей записи памяти (`memory`). Без области — поиск по всем областям. Устаревшие записи код удаляет и один раз переспрашивает.
+**Область.** Явная в вопросе (`area_source=question`), из ответа на уточнение (`asked`), из предыдущего ответа при продолжении темы или из свежей записи памяти (`memory`). Для записи в память учитывается только область, явно названная в текущей реплике. Без области поиск идёт по всем доступным областям. Устаревшие записи код удаляет и один раз переспрашивает.
+
+**Сокращения.** Knowledge добавляет «РП — руководитель проекта» к поисковому запросу с отдельным сокращением «РП», если в нём ещё нет расшифровки. Поиск и реранжирование используют расширенный запрос в пределах уровней сотрудника.
 
 **Deep Agent** — `create_deep_agent` с системным промптом и тремя инструментами. Файловые операции и делегирование убраны из схем и блокируются перед исполнением. Инструментов памяти у модели нет. Предел шагов — `AGENT_MAX_STEPS`.
 
@@ -471,7 +474,7 @@ Exchange `regagent` (topic). Сообщение — JSON с `message_id`, UTC `c
 | `answer.evidence_check`, `answer.comparison_check` | backend | `ok`, `rejected`, `error` | `run_id` |
 | `search.tool` | backend | `ok`, `empty`, `unavailable`, `error` | `areas`, `fragments`, `low_confidence`, `areas_diverge`, `run_id` |
 | `refs.tool` | backend | `ok`, `empty`, `not_found`, `unavailable`, `error` | `doc_id`, `outgoing`, `incoming`, `run_id` |
-| `search.request` | knowledge | `ok`, `empty`, `error` | `levels`, `areas`, `fragments`, `low_confidence`, `areas_diverge` |
+| `search.request` | knowledge | `ok`, `empty`, `access_limited`, `error` | `levels`, `areas`, `fragments`, `low_confidence`, `areas_diverge` |
 | `clause.request`, `refs.request` | knowledge | `ok`, `empty`, `not_found`, `rejected`, `error` | `doc_id`, `levels`, `http_status` |
 | `index.step` | knowledge | `ok`, `error` | `step`, `job_id`, `doc_id`, `version`, `attempt` |
 | `index.job` | knowledge | `succeeded`, `retrying`, `failed` | `job_id`, `doc_id`, `version`, `op`, `attempt`, `force` |

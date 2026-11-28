@@ -126,6 +126,9 @@
       "realmRoles": [
         "admin"
       ],
+      "groups": [
+        "/levels/closed_fin"
+      ],
       "credentials": [
         {
           "type": "password",

@@ -534,6 +534,47 @@ def test_search_event_records_outcome_without_query(
     assert "секретная" not in json.dumps(event, ensure_ascii=False)
 
 
+def test_restricted_document_is_marked_only_in_service_logs(
+    fixture_deps: ApiDeps, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with TestClient(create_app(fixture_deps)) as client:
+        results = [
+            client.post("/search", json={"query": query, "levels": levels}, headers=HEADERS)
+            for query, levels in [
+                ("Where is the Finance document?", ["public"]),
+                ("Where is the finance-policy document?", ["public"]),
+                ("Where is the Finance document?", ["public", "closed_fin"]),
+            ]
+        ]
+
+    assert all(response.status_code == 200 for response in results)
+    assert all(response.json() == results[0].json() for response in results)
+    events = _events(capsys, "search.request")
+    assert [event["status"] for event in events] == ["access_limited", "empty", "empty"]
+    assert "Finance" not in repr(events) and "finance" not in repr(events)
+    assert isinstance(fixture_deps.rag, RagFixture)
+    assert [level for level, _, _ in fixture_deps.rag.calls] == [
+        "public",
+        "public",
+        "public",
+        "closed_fin",
+    ]
+
+
+def test_search_expands_project_lead_only_when_needed(fixture_deps: ApiDeps) -> None:
+    with TestClient(create_app(fixture_deps)) as client:
+        for query in ("Кто назначает РП?", "Кто назначает руководителя проекта (РП)?"):
+            response = client.post(
+                "/search", json={"query": query, "levels": ["public"]}, headers=HEADERS
+            )
+            assert response.status_code == 200
+    assert isinstance(fixture_deps.rag, RagFixture)
+    assert fixture_deps.rag.calls == [
+        ("public", "Кто назначает РП? (РП — руководитель проекта)", 3),
+        ("public", "Кто назначает руководителя проекта (РП)?", 3),
+    ]
+
+
 def test_clause_and_refs_events_record_not_found(
     fixture_deps: ApiDeps, capsys: pytest.CaptureFixture[str]
 ) -> None:

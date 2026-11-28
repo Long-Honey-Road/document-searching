@@ -650,7 +650,7 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Поиск: пусто и недоступен",
+      "title": "Поиск и ограничения доступа",
       "datasource": {
         "type": "loki",
         "uid": "loki"

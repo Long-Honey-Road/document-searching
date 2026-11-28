@@ -27,6 +27,8 @@ from .settings import (
 )
 
 log = logging.getLogger(__name__)
+_PROJECT_LEAD = re.compile(r"\bРП\b")
+_PROJECT_LEAD_FULL = re.compile(r"\bруководител\w*\s+проект\w*\b", re.I)
 
 
 class ChunkSearch(Protocol):
@@ -175,15 +177,16 @@ async def search(
         if registry_snapshot is not None
         else None
     )
-    chunks_by_level = await asyncio.gather(
-        *(rag.query(level, req.query, top_k) for level in levels),
-    )
+    query = req.query
+    if _PROJECT_LEAD.search(query) and not _PROJECT_LEAD_FULL.search(query):
+        query += " (РП — руководитель проекта)"
+    chunks_by_level = await asyncio.gather(*(rag.query(level, query, top_k) for level in levels))
     allowed_areas = {*req.areas, COMMON_AREA} if req.areas else None
     acl: dict[str, DocumentRecord | str | None] = {}
     candidates: dict[tuple[str, str, str], Fragment] = {}
     practice_chunks: dict[tuple[str, str], tuple[FragmentHeader, str]] = {}
     retrieved_docs: set[str] = set()
-    query_words = search_tokens(req.query)
+    query_words = search_tokens(query)
     query_terms = set(query_words)
     query_pairs = set(pairwise(query_words))
     for level, chunks in zip(levels, chunks_by_level, strict=True):
@@ -249,7 +252,7 @@ async def search(
         _rerank_excerpt(fragment.text, query_terms, rerank_text_max_chars) for fragment in fragments
     ]
     retrieved = monotonic()
-    scores = await reranker.rerank(req.query, texts) if texts else []
+    scores = await reranker.rerank(query, texts) if texts else []
     log.info(
         "search retrieval_s=%.2f rerank_s=%.2f candidates=%d",
         retrieved - started,

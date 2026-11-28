@@ -82,7 +82,7 @@ GitHub Actions проверяет Python, тесты на утечки (Postgres
 | `employee_public` | `KEYCLOAK_EMPLOYEE_PUBLIC_PASSWORD` | страница приложения | открытые документы |
 | `employee_fin` | `KEYCLOAK_EMPLOYEE_FIN_PASSWORD` | страница приложения | + закрытый финансовый уровень (группа `/levels/closed_fin`) |
 | `qc_expert` | `KEYCLOAK_QC_EXPERT_PASSWORD` | страница приложения | роль `qc` |
-| `admin` | `KEYCLOAK_ADMIN_DEMO_PASSWORD` | страница приложения | роль `admin` приложения |
+| `admin` | `KEYCLOAK_ADMIN_DEMO_PASSWORD` | страница приложения | роль `admin` приложения и закрытый финансовый уровень |
 | значение `KEYCLOAK_ADMIN` (обычно `admin`) | `KEYCLOAK_ADMIN_PASSWORD` | только `kcadm.sh` в контейнере `keycloak` | администратор Keycloak (realm `master`) |
 
 **Логин `admin` есть в двух местах с разными паролями.** На странице приложения нужен
@@ -91,6 +91,14 @@ GitHub Actions проверяет Python, тесты на утечки (Postgres
 **Браузерной админки Keycloak снаружи нет** (D-47): прокси отвечает 404 на `/auth/admin*` и
 `/auth/realms/master*`, релиз это проверяет. Пользователей, пароли и группы меняют через
 `kcadm.sh`, как ниже.
+
+Если realm уже был создан до добавления финансового уровня для демо-администратора,
+назначьте `/levels/closed_fin` пользователю `admin` в realm `regagent` через `kcadm.sh`.
+Для этого найдите идентификатор пользователя командой
+`get users -r regagent -q username=admin -q exact=true` и идентификатор группы через
+`get group-by-path/levels/closed_fin -r regagent`. Затем выполните
+`update users/<user-id>/groups/<group-id> -r regagent -n`.
+Демо-администратор должен повторно войти, чтобы получить группу в токене.
 
 Пароли применяются **только при первом старте Keycloak**. Если поменять их в `.env`
 потом, Keycloak этого не увидит. Менять пароль надо через `kcadm.sh`:

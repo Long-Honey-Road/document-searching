@@ -12,6 +12,7 @@ from langgraph.store.memory import InMemoryStore
 from pydantic import SecretStr
 from regagent_backend.graph import AgentDeps, build_graph
 from regagent_backend.knowledge_client import KnowledgeClient
+from regagent_backend.memory import SIGNALS_KEY
 from regagent_backend.settings import BackendSettings
 from regagent_backend.usage import UsageCallback
 from regagent_common.contracts import AnswerMeta, ClauseResponse, Fragment, SearchResponse
@@ -79,6 +80,7 @@ def guard(*areas: str, on_topic: bool = True) -> dict[str, str]:
                 "qc_action": "none",
                 "missing_detail": None,
                 "area_only": False,
+                "topic_relation": "unclear",
             }
         )
     }
@@ -672,6 +674,86 @@ async def test_missing_answer_offers_qc_and_drafts_only_on_request(stand: Any) -
     assert "подтвердите отправку" in guidance.text
     assert "заявка отправлена" not in guidance.text.lower()
     assert len(lookups) == 1
+
+
+async def test_new_question_after_qc_gets_its_own_search_and_answer(stand: Any) -> None:
+    model, graph, lookups = stand
+    old_question = "В ДИБ компенсируют парковку дома?"
+    model.responses = [guard("ДИБ"), {"content": "НЕТ_ОТВЕТА"}]
+    first = await graph.ainvoke({"messages": [("human", old_question)]}, config=CONFIG)
+    assert meta(first["messages"][-1]).outcome == "not_found"
+
+    question = "В ДИБ кто назначает руководителя проекта?"
+    stale_guard = json.loads(guard("ДИБ")["content"])
+    stale_guard.update(qc_action="guide", topic_relation="new_topic")
+    model.responses = [
+        {"content": json.dumps(stale_guard)},
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    second = await graph.ainvoke(
+        {"messages": [*first["messages"], ("human", question)]}, config=CONFIG
+    )
+
+    assert meta(second["messages"][-1]).outcome == "answer"
+    assert [hit["query"] for hit in lookups] == [old_question, question]
+    user_messages = [
+        msg["content"] for msg in model.requests[-1]["messages"] if msg["role"] == "user"
+    ]
+    assert user_messages == [question]
+
+
+async def test_follow_up_uses_answered_topic_only_as_context(stand: Any) -> None:
+    model, graph, lookups = stand
+    original = "Кто назначает руководителя проекта в ДИБ?"
+    answer = "Координатор [f:dib-project-activity@1#2.7]."
+    model.responses = [guard("ДИБ"), {"content": answer}]
+    first = await graph.ainvoke({"messages": [("human", original)]}, config=CONFIG)
+    assert meta(first["messages"][-1]).outcome == "answer"
+    namespace = ("users", "reader", "memory")
+    first_signal = await graph.store.aget(namespace, SIGNALS_KEY)
+    assert first_signal is not None
+
+    follow_up = "А если в карточке нет итогового расчёта?"
+    follow_up_guard = json.loads(guard()["content"])
+    follow_up_guard["topic_relation"] = "follow_up"
+    model.responses = [{"content": json.dumps(follow_up_guard)}, {"content": answer}]
+    second = await graph.ainvoke(
+        {"messages": [*first["messages"], ("human", follow_up)]}, config=CONFIG
+    )
+
+    assert meta(second["messages"][-1]).outcome == "answer"
+    assert lookups[-1]["areas"] == ["ДИБ"]
+    assert lookups[-1]["query"] == f"{original}\n{follow_up}"
+    user_messages = [
+        msg["content"] for msg in model.requests[-1]["messages"] if msg["role"] == "user"
+    ]
+    [payload] = user_messages
+    assert json.loads(payload) == {"текущий запрос": follow_up, "предыстория": [original]}
+    assert await graph.store.aget(namespace, SIGNALS_KEY) == first_signal
+
+
+async def test_new_topic_replaces_pending_clarification(stand: Any) -> None:
+    model, graph, lookups = stand
+    old = "Кто согласует расчёт в ДБРЦТ?"
+    new = "В ДИБ кто получает материалы проекта?"
+    clarification = "Какой этап проекта вы имеете в виду?"
+    classify_new = json.loads(guard("ДИБ")["content"])
+    classify_new.update(topic_relation="new_topic", missing_detail=clarification)
+    model.responses = [
+        guard("ДБРЦТ"),
+        {"content": f"УТОЧНЕНИЕ: {clarification}"},
+        {"content": json.dumps(classify_new)},
+        guard(),
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    messages: list[Any] = []
+    for question in (old, new, "Уже открыт проект."):
+        state = await graph.ainvoke({"messages": [*messages, ("human", question)]}, config=CONFIG)
+        messages = state["messages"]
+
+    assert meta(messages[-1]).outcome == "answer"
+    assert lookups[-1]["areas"] == ["ДИБ"]
+    assert lookups[-1]["query"] == f"{new}\nУже открыт проект."
 
 
 async def test_reaching_clarification_limit_offers_qc(stand: Any) -> None:
