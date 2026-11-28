@@ -1,4 +1,4 @@
-"""Настройки backend из `.env` (dev_docs/06-contracts.md#переменные-env)."""
+"""Настройки backend из `.env` (docs/LLD.md, «Переменные окружения»)."""
 
 from __future__ import annotations
 

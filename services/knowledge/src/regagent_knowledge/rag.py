@@ -2,7 +2,7 @@
 
 Первым инициализируется пустой служебный workspace ``lvl__sentinel``: если какой-то путь
 LightRAG упадёт на workspace по умолчанию процесса, он попадёт в пустоту, а не в чужой
-уровень. Решения по работе с LightRAG — D-28…D-30 в dev_docs/09-decisions.md.
+уровень. Решения по работе с LightRAG — D-28…D-30 в docs/LLD.md.
 """
 
 from __future__ import annotations

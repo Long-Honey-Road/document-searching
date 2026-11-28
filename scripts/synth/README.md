@@ -47,7 +47,5 @@ uv run --directory "$HOME/srv/regagent_prod/source" python -m scripts.synth.publ
 uv run --directory "$HOME/srv/regagent_prod/source" python -m scripts.synth.publish_demo_practice --root "$HOME/srv/regagent_prod"
 ```
 
-Для видео практики публикуются **до** записи. В кадре показывается ответ с
-карточкой «Практика ОКК» и отдельная новая заявка по другому вопросу без
-последующей публикации. Точные реплики и порядок — в
-`dev_docs/demo-checklist.md`.
+Локальный стенд из корня репозитория: `REGAGENT_ORIGIN_PORT=8080` в `.env`, затем
+`uv run python -m scripts.synth.publish_demo_practice --root .` (см. корневой README).

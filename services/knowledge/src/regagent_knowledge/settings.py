@@ -1,4 +1,4 @@
-"""Настройки knowledge (dev_docs/06-contracts.md#переменные-env)."""
+"""Настройки knowledge (docs/LLD.md, «Переменные окружения»)."""
 
 from __future__ import annotations
 

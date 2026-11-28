@@ -26,12 +26,12 @@
 			TXT 200
 	}
 
-	# Лимит по IP добавляется плагином rate_limit (задача P0-3); лимит на учётку — в backend.
+	# Лимита по IP нет: плагин rate_limit не собран. Лимит на учётку — в backend.
 	handle_path /api/* {
 		reverse_proxy backend:8000
 	}
 	handle /auth/* {
-		# Консоль администратора и master realm снаружи не отдаём (D-47):
+		# Консоль администратора и master realm снаружи не отдаём (D-47 в docs/LLD.md):
 		# стенд открыт через Cloudflare Bypass, админка — kcadm.sh в контейнере keycloak.
 		@keycloakAdmin path /auth/admin /auth/admin/* /auth/realms/master /auth/realms/master/*
 		respond @keycloakAdmin 404

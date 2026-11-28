@@ -64,7 +64,7 @@ async def delete_memory(key: str, sub: Annotated[str, Depends(_authenticated_sub
     return Response(status_code=204)
 
 
-# --- служебные маршруты: прокси к /admin knowledge, только роль admin (P2-B3) ---
+# --- служебные маршруты: прокси к /admin knowledge, только роль admin (D-51) ---
 
 
 async def _admin_sub(request: Request, sub: Annotated[str, Depends(_authenticated_sub)]) -> str:

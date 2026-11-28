@@ -1,11 +1,11 @@
 """Служебный заголовок фрагмента и fragment_id.
 
 Каждый фрагмент, который knowledge кладёт в LightRAG, начинается заголовком, по которому
-поиск восстанавливает метаданные и проверяет права (dev_docs/03-knowledge-service.md).
+поиск восстанавливает метаданные и проверяет права (docs/LLD.md, «Общий пакет»).
 
 Регламент: ``⟦doc=<doc_id> v=<version> clause=<clause> area=<area> level=<level>⟧``
 Практика:  ``⟦practice=<id> doc=<doc_id> [v=<version>] clause=<clause> mode=<mode> area=<area>
-level=<level>⟧`` — ``v=`` необязателен (TECH-DEBT TD-01 в dev_docs/09-decisions.md).
+level=<level>⟧`` — ``v=`` необязателен (TECH-DEBT TD-01 в docs/TECH-DEBT.md).
 
 Формат и порядок полей строгие: фрагмент, заголовок которого не разбирается, считается
 недоверенным и выбрасывается из выдачи.

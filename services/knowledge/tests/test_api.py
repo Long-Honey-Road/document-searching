@@ -371,7 +371,7 @@ def test_search_ignores_okf_text_with_different_hash(fixture_deps: ApiDeps) -> N
     assert "stale text" not in response.text
 
 
-# --- служебный API (P2-B3) ---------------------------------------------------------
+# --- служебный API (D-51) ----------------------------------------------------------
 
 
 class JobLogFixture:

@@ -1,4 +1,4 @@
-"""Мониторинг: Grafana + Loki + Alloy + свой туннель, отдельный compose (D-65)."""
+"""Мониторинг: Grafana + Loki + Alloy + свой туннель, отдельный compose."""
 
 import json
 import re

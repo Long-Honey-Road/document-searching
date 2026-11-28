@@ -1,4 +1,4 @@
-"""Служебные маршруты backend: прокси к /admin knowledge только для роли admin (P2-B3)."""
+"""Служебные маршруты backend: прокси к /admin knowledge только для роли admin (D-51)."""
 
 from __future__ import annotations
 

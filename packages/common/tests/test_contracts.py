@@ -16,7 +16,7 @@ from regagent_common.contracts import (
     SearchResponse,
 )
 
-# Примеры — из dev_docs/06-contracts.md
+# Примеры — из docs/LLD.md
 FRAGMENT = {
     "fragment_id": "dib-project-activity@3#2.7",
     "doc_id": "dib-project-activity",

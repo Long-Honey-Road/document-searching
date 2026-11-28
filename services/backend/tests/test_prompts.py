@@ -1,4 +1,4 @@
-"""Обязательные правила системного промпта (dev_docs/04-backend-agent.md)."""
+"""Обязательные правила системного промпта (docs/LLD.md, «Backend: агент»)."""
 
 from regagent_backend.guard import PROMPTS
 

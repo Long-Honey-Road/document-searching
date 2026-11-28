@@ -1,4 +1,4 @@
--- Реестр документов и задач индексации (dev_docs/03-knowledge-service.md, модуль registry).
+-- Реестр документов и задач индексации (docs/LLD.md, «Схемы данных»).
 CREATE TABLE IF NOT EXISTS documents (
     doc_id      text PRIMARY KEY,
     version     integer,

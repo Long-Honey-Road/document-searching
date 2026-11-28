@@ -1,4 +1,4 @@
-"""Модели контрактов из dev_docs/06-contracts.md."""
+"""Модели межсервисных контрактов (docs/LLD.md)."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ class RefsResponse(_Model):
     incoming: list[DocumentRef]
 
 
-# --- служебный API knowledge (/admin, P2-B3) ---
+# --- служебный API knowledge (/admin, D-51) ---
 
 
 class AdminDocument(_Model):

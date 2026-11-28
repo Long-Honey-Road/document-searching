@@ -1,6 +1,6 @@
 # Grafana для стенда RegAgent
 
-Отдельный Compose-проект `regagent-grafana` на том же Mac, что и стенд (D-65). Он не
+Отдельный Compose-проект `regagent-grafana` на том же Mac, что и стенд. Он не
 зависит от релизов: выкатка стенда его не трогает, а его падение не трогает стенд.
 
 | Сервис | Что делает |
@@ -44,7 +44,8 @@ chmod 600 .env
 
 - `TUNNEL_TOKEN` — токен из шага 1;
 - `GRAFANA_ADMIN_PASSWORD` — любой длинный пароль (`openssl rand -base64 24`);
-- `REGAGENT_LOGS_DIR` — `/Users/<user>/srv/regagent_prod/logs`, полный путь без `~`.
+- `REGAGENT_LOGS_DIR` — полный путь к `logs` выкатки, без `~` и без `<user>`. Проще вписать командой:
+  `sed -i '' "s|^REGAGENT_LOGS_DIR=.*|REGAGENT_LOGS_DIR=$HOME/srv/regagent_prod/logs|" .env`
 
 Пустой `TUNNEL_TOKEN`, `GRAFANA_ADMIN_PASSWORD` или `REGAGENT_LOGS_DIR` остановит
 `docker compose` с ошибкой — так и задумано.
@@ -77,7 +78,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:13000/api/health   # 2
 - Логи: решения выкатки и откаты, события с ошибкой, логи любого сервиса (переменная
   «Сервис» вверху, `GET /health` скрыт).
 
-Поля событий — в `dev_docs/06-contracts.md`, раздел про события. В запросах
+Поля событий — в [docs/LLD.md, «События»](../../docs/LLD.md#10-события). В запросах
 поля читаются через `| json`; метками стали только `service`, `container`, `event`,
 `status`. Тексты вопросов и ответов в события не пишутся (D-52), поэтому в Grafana их нет.
 
@@ -110,7 +111,9 @@ docker compose down                             # остановить; тома
 
 | Симптом | Что проверить |
 | --- | --- |
+| 1033 на `grafana.honey-road.tech` при живом туннеле | DNS-запись `grafana` указывает не на этот туннель: нужна CNAME на `<ID туннеля>.cfargotunnel.com`, Proxied. ID — в `docker compose logs tunnel` (`tunnelID=`) |
 | 502 на `grafana.honey-road.tech` | `docker compose logs tunnel`; service в Published application — `grafana:3000`; туннель отдельный от стенда |
 | Дашборд пустой | `docker compose logs alloy`; стенд называется `regagent-prod` (`docker ps --filter name=regagent-prod`), иначе поменять `REGAGENT_PROJECT`; время на дашборде включает момент вопросов |
-| Нет «Выкатка: решения» | в `$REGAGENT_LOGS_DIR` есть `events.jsonl` (появляется после первого решения выкатки на коде от 28.11) |
+| Нет «Выкатка: решения» | в `$REGAGENT_LOGS_DIR` есть `events.jsonl` (появляется после первого решения выкатки) |
+| `mkdir /host_mnt/Users/<user>: permission denied` при старте `alloy` | в `REGAGENT_LOGS_DIR` осталась заглушка — вписать настоящий путь |
 | `permission denied` на `docker.sock` | Docker Desktop → Settings → Advanced → включено **Allow the default Docker socket to be used** |
