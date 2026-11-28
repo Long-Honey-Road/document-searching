@@ -102,13 +102,20 @@ async def review_evidence(
     model: BaseChatModel,
     mode: StructuredMode,
     run: dict[str, str],
+    *,
+    areas: tuple[str, ...],
 ) -> EvidenceReview:
     return await invoke_structured(
         model,
         EvidenceReview,
         mode,
         (PROMPTS / "evidence_check.md").read_text(encoding="utf-8"),
-        {"вопрос": question, "ответ": text, "источники": _source_data(cited)},
+        {
+            "вопрос": question,
+            "выбранные области": list(areas),
+            "ответ": text,
+            "источники": _source_data(cited),
+        },
         {"llm_operation": "evidence_check", **run},
     )
 

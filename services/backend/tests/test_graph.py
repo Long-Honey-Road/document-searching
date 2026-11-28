@@ -925,6 +925,30 @@ async def test_evidence_check_keeps_a_directly_supported_negative_answer(stand: 
     assert reply.text == supported_draft
 
 
+async def test_evidence_review_uses_selected_area_and_retries_repeated_choice(stand: Any) -> None:
+    model, graph, lookups = stand
+    model.responses = [
+        guard("ДИБ"),
+        {"content": "Пока не могу однозначно ответить [f:dib-project-activity@1#2.7]."},
+        {
+            "content": json.dumps(
+                {
+                    "outcome": "ask_clarification",
+                    "question": "Проект относится к ДИБ или к общему порядку?",
+                }
+            )
+        },
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    result = await graph.ainvoke(
+        {"messages": [("human", "Кто назначает руководителя проекта в ДИБ?")]}, config=CONFIG
+    )
+    assert meta(result["messages"][-1]).outcome == "answer"
+    data = json.loads(model.requests[2]["messages"][1]["content"])
+    assert data["выбранные области"] == ["ДИБ"]
+    assert [lookup["areas"] for lookup in lookups] == [["ДИБ"]]
+
+
 async def test_area_question_from_guard_uses_area_outcome(stand: Any) -> None:
     model, graph, _ = stand
     classification = json.loads(guard()["content"])

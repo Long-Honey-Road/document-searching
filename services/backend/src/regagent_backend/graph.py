@@ -341,12 +341,13 @@ async def _answer(
     prompt += "\n\nДопустимые области: " + ", ".join(settings.AREA_CODES)
     if memory_line:
         prompt += "\n" + memory_line
+    area_instruction = (
+        "Области текущего запроса: "
+        + ", ".join(areas)
+        + ". Они уже выбраны. Уточняй только недостающие условия в этих областях."
+    )
     if areas:
-        prompt += (
-            "\nОбласти текущего запроса: "
-            + ", ".join(areas)
-            + ". Они уже выбраны. Уточняй только недостающие условия в этих областях."
-        )
+        prompt += "\n" + area_instruction
     # Только текущая реплика является запросом. Предыстория нужна для разрешения ссылок
     # на тему или условия; ответы и результаты прошлого хода не передаются.
     history: list[AnyMessage] = [HumanMessage(question)]
@@ -440,13 +441,7 @@ async def _answer(
                 if not areas:
                     return _reply(ASK_AREA, "ask_area", reason="area_needed"), run
                 if attempt == 0:
-                    history.append(
-                        HumanMessage(
-                            "Область текущего запроса уже задана: "
-                            + ", ".join(areas)
-                            + ". Используй её для ответа по найденным пунктам."
-                        )
-                    )
+                    history.append(HumanMessage(area_instruction + " Ответь по найденным пунктам."))
                     continue
             elif can_clarify:
                 return _ask_detail(clarification, areas, area_source), run
@@ -469,6 +464,7 @@ async def _answer(
                         deps.guard_model,
                         settings.GUARD_MODE,
                         ids,
+                        areas=areas,
                     )
                     event["status"] = "ok" if review.outcome == "answer" else "rejected"
             except (OpenAIError, OutputParserException, ValueError) as exc:
@@ -481,9 +477,19 @@ async def _answer(
                 return _unanswered(run), run
             if review.outcome == "ask_clarification":
                 clarification = valid_clarification(review.question or "")
-                if not clarification or not can_clarify:
+                if not clarification:
                     return _unanswered(run), run
-                return _ask_detail(clarification, areas, area_source), run
+                if asks_for_area(clarification, settings.AREA_CODES):
+                    if not areas:
+                        return _reply(ASK_AREA, "ask_area", reason="area_needed"), run
+                    if attempt == 0:
+                        history.append(
+                            HumanMessage(area_instruction + " Ответь по найденным пунктам.")
+                        )
+                        continue
+                elif can_clarify:
+                    return _ask_detail(clarification, areas, area_source), run
+                return _unanswered(run), run
         if supported and len(areas) > 1:
             try:
                 with events.timed("answer.comparison_check", **ids) as event:
