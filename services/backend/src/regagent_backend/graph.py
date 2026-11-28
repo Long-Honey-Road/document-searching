@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -55,11 +56,13 @@ from regagent_backend.dialogue import (
     NO_ANSWER,
     NOT_FOUND,
     QC_GUIDE,
+    TOPIC_START,
     Topic,
     asks_for_area,
     current_topic,
     parse_clarification,
     qc_draft,
+    qc_requested,
     stored_meta,
     valid_clarification,
 )
@@ -188,6 +191,7 @@ def _reply(
     area_source: AreaSource = "none",
     sources: list[AnswerSource] | None = None,
     reason: str | None = None,
+    topic_start: bool = False,
 ) -> AIMessage:
     trace = _TRACE.get()
     if trace is not None and reason is not None:
@@ -199,7 +203,10 @@ def _reply(
         sources=sources or [],
         outcome=outcome,
     )
-    return AIMessage(content=text, additional_kwargs={"answer_meta": meta.model_dump()})
+    data = {"answer_meta": meta.model_dump()}
+    return AIMessage(
+        content=text, additional_kwargs={**data, TOPIC_START: True} if topic_start else data
+    )
 
 
 def _unanswered(run: SearchRun) -> AIMessage:
@@ -209,13 +216,16 @@ def _unanswered(run: SearchRun) -> AIMessage:
     return _reply(NOT_FOUND, "not_found", reason=reason)
 
 
-def _ask_detail(question: str, areas: tuple[str, ...], source: AreaSource) -> AIMessage:
+def _ask_detail(
+    question: str, areas: tuple[str, ...], source: AreaSource, *, topic_start: bool = False
+) -> AIMessage:
     return _reply(
         question,
         "ask_clarification",
         area=areas[0] if len(areas) == 1 else None,
         area_source=source,
         reason="missing_detail",
+        topic_start=topic_start,
     )
 
 
@@ -303,7 +313,7 @@ async def _hydrate_citations(
 async def _answer(
     deps: AgentDeps,
     identity: UserIdentity,
-    questions: list[str],
+    question: str,
     continuation: Topic | None,
     search_queries: list[str],
     memory_line: str,
@@ -312,6 +322,7 @@ async def _answer(
     ids: dict[str, str],
     *,
     area_question: bool,
+    area_only: bool,
 ) -> tuple[AIMessage, SearchRun]:
     run = SearchRun()
     trace = _TRACE.get()
@@ -332,10 +343,17 @@ async def _answer(
         prompt += "\n" + memory_line
     if areas:
         prompt += "\nОбласти текущего запроса: " + ", ".join(areas)
-    # Предыдущие вопросы помогают разрешать короткие продолжения. Ответы и сырые результаты
-    # прошлого запуска не передаются модели и не могут подтвердить ссылку.
-    history: list[AnyMessage] = [HumanMessage(question) for question in questions]
-    initial_query = "\n".join(continuation.questions) if continuation else questions[-1]
+    # Только текущая реплика является запросом. Предыстория нужна для разрешения ссылок
+    # на тему или условия; ответы и результаты прошлого хода не передаются.
+    history: list[AnyMessage] = [HumanMessage(question)]
+    initial_query = question
+    if continuation is not None:
+        context = continuation.questions[:-1]
+        history[0] = HumanMessage(
+            json.dumps({"текущий запрос": question, "предыстория": context}, ensure_ascii=False)
+        )
+        search_context = context if area_only and context else continuation.questions
+        initial_query = "\n".join(search_context)
     can_clarify = continuation is None or continuation.clarification_count < MAX_DETAIL_QUESTIONS
     queries = list(
         dict.fromkeys(query.strip()[: settings.QUESTION_MAX_CHARS] for query in search_queries)
@@ -522,7 +540,6 @@ async def _turn(
     )
     awaiting_area = previous is not None and previous.outcome == "ask_area"
     awaiting_detail = previous is not None and previous.outcome == "ask_clarification"
-    continuation = current_topic(messages, limit) if awaiting_area or awaiting_detail else None
     settings = deps.settings
     ids = run_fields(config)
     try:
@@ -552,9 +569,13 @@ async def _turn(
         )
         return _reply(REFUSAL, "refusal", reason=refusal)
 
-    if guard.qc_action == "guide":
+    question = questions[-1]
+    qc_intent = qc_requested(
+        question, after_qc_help=previous is not None and previous.outcome == "qc_help"
+    )
+    if qc_intent and guard.qc_action == "guide":
         return _reply(QC_GUIDE, "qc_help", reason="qc_guide")
-    if guard.qc_action == "draft":
+    if qc_intent and guard.qc_action == "draft":
         draft = qc_draft(messages, limit)
         return _reply(
             draft or "Напишите отдельным сообщением вопрос, по которому нужен черновик в ОКК.",
@@ -562,8 +583,13 @@ async def _turn(
             reason="qc_draft",
         )
 
+    starts_topic = guard.topic_relation == "new_topic" and not guard.area_only
+    if starts_topic:
+        awaiting_area = awaiting_detail = False
+    continuation = current_topic(messages, limit) if awaiting_area or awaiting_detail else None
     allowed = set(settings.AREA_CODES)
     areas = tuple(dict.fromkeys(area for area in guard.explicit_areas if area in allowed))
+    explicit_area = bool(areas)
     source: AreaSource = ("asked" if awaiting_area else "question") if areas else "none"
     memory = memory_service(store, settings) if store is not None else None
     if guard.memory_action != "none":
@@ -571,8 +597,23 @@ async def _turn(
             return _reply(FALLBACK, "fallback", reason="memory_unavailable")
         return await _memory_action(memory, identity, guard, areas, config)
 
+    area_only = guard.area_only and len(areas) == 1
+    if continuation is None and previous and isinstance(messages[-2], AIMessage):
+        recover_area = area_only and previous.outcome in {"fallback", "not_found"}
+        follow_answer = guard.topic_relation == "follow_up" and previous.outcome in {
+            "answer",
+            "not_found",
+            "fallback",
+        }
+        if recover_area or follow_answer:
+            prior = current_topic(messages[:-1], limit, include_last_answer=True)
+            if prior.questions:
+                continuation = Topic([*prior.questions[-5:], question], 0)
+                if recover_area:
+                    source = "asked"
+
     if (
-        awaiting_detail
+        continuation
         and not areas
         and previous
         and previous.area_used
@@ -580,26 +621,10 @@ async def _turn(
     ):
         areas, source = (previous.area_used,), previous.area_source
 
-    if (
-        continuation is None
-        and guard.area_only
-        and len(areas) == 1
-        and previous
-        and previous.outcome in {"fallback", "not_found"}
-        and isinstance(messages[-2], AIMessage)
-    ):
-        prior = current_topic(messages[:-2], limit)
-        if prior.questions:
-            continuation = Topic([*prior.questions, questions[-1]], prior.clarification_count)
-            source = "asked"
-
-    if continuation and guard.area_only and areas and len(continuation.questions) > 1:
-        continuation = Topic(continuation.questions[:-1], continuation.clarification_count)
-
     detail = valid_clarification(guard.missing_detail or "")
     area_question = bool(detail and asks_for_area(detail))
     if continuation is None and detail and not area_question:
-        return _ask_detail(detail, areas, source)
+        return _ask_detail(detail, areas, source, topic_start=starts_topic)
 
     now = datetime.now(UTC)
     records = await memory.load(identity.sub) if memory is not None else []
@@ -612,12 +637,12 @@ async def _turn(
             # Для демо устаревшая память равна удалённой: переспросить один раз и забыть
             expired = await memory.purge_stale(identity.sub, now)
             events.emit_fields("memory.expired", {"areas": expired, **ids}, status="ok")
-            return _reply(ASK_AREA, "ask_area", reason="memory_stale")
+            return _reply(ASK_AREA, "ask_area", reason="memory_stale", topic_start=starts_topic)
 
     reply, run = await _answer(
         deps,
         identity,
-        questions,
+        question,
         continuation,
         guard.search_queries,
         memory_line,
@@ -625,11 +650,15 @@ async def _turn(
         source,
         ids,
         area_question=area_question,
+        area_only=area_only,
     )
+    if starts_topic:
+        reply.additional_kwargs[TOPIC_START] = True
     meta = AnswerMeta.model_validate(reply.additional_kwargs["answer_meta"])
     if (
         memory is not None
         and meta.outcome == "answer"
+        and explicit_area
         and source in {"question", "asked"}
         and len(areas) == 1
         and any(filters == list(areas) for filters, _ in run.searches)

@@ -29,7 +29,9 @@ def test_demo_users_have_only_their_assigned_access() -> None:
     assert users["employee_public"].get("groups", []) == []
     assert users["employee_fin"]["groups"] == ["/levels/closed_fin"]
     assert users["qc_expert"]["realmRoles"] == ["qc"]
+    assert users["qc_expert"].get("groups", []) == []
     assert users["admin"]["realmRoles"] == ["admin"]
+    assert users["admin"]["groups"] == ["/levels/closed_fin"]
 
     for username, user in users.items():
         [credential] = user["credentials"]

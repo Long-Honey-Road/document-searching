@@ -13,6 +13,7 @@ from regagent_common.contracts import AnswerMeta
 CLARIFY_PREFIX = "УТОЧНЕНИЕ:"
 NO_ANSWER = "НЕТ_ОТВЕТА"
 WAITING = frozenset({"ask_area", "ask_clarification"})
+TOPIC_START = "topic_start"
 MAX_DETAIL_QUESTIONS = 2
 QC_GUIDE = (
     "Нажмите «Передать в ОКК» рядом с исходным вопросом, "
@@ -28,6 +29,24 @@ _AREA_QUESTION = re.compile(
     r"(?:област\w*|дирекци\w*|департамент\w*|подразделени\w*)\b",
     re.IGNORECASE,
 )
+_QC_MENTION = re.compile(r"\b(?:окк|(?:служб|отдел)\w*\s+(?:контроля\s+)?качества)\b", re.I)
+_QC_ACTION = re.compile(
+    r"\b(?:черновик\w*|составь|оформи|напиши|передай|отправь|подай|"
+    r"(?:как|можешь|можно)\s+(?:мне\s+)?(?:составить|оформить|написать|передать|отправить|подать))\b",
+    re.I,
+)
+_QC_SHORT_SEND = re.compile(
+    r"(?:пожалуйста,? )?(?:передай|отправь|подай) "
+    r"(?:заявку|е[ёе]|этот вопрос)(?: сам(?:остоятельно)?)?[.!?]*",
+    re.I,
+)
+
+
+def qc_requested(question: str, *, after_qc_help: bool) -> bool:
+    return bool(
+        (_QC_MENTION.search(question) and _QC_ACTION.search(question))
+        or (after_qc_help and _QC_SHORT_SEND.fullmatch(question))
+    )
 
 
 def asks_for_area(question: str) -> bool:
@@ -69,18 +88,24 @@ class Topic:
     clarification_count: int
 
 
-def current_topic(messages: Sequence[BaseMessage], limit: int) -> Topic:
+def current_topic(
+    messages: Sequence[BaseMessage], limit: int, *, include_last_answer: bool = False
+) -> Topic:
     questions = []
     detail_count = 0
-    for message in reversed(messages):
+    topic_boundary = False
+    for index, message in enumerate(reversed(messages)):
         if isinstance(message, HumanMessage):
             questions.append(message.text.strip()[:limit])
-            if len(questions) == 6:
+            if topic_boundary or len(questions) == 6:
                 break
         elif isinstance(message, AIMessage):
             meta = stored_meta(message)
-            if meta is None or meta.outcome not in WAITING:
+            if meta is None or (
+                meta.outcome not in WAITING and not (include_last_answer and index == 0)
+            ):
                 break
+            topic_boundary = message.additional_kwargs.get(TOPIC_START) is True
             detail_count += meta.outcome == "ask_clarification"
     return Topic(list(reversed(questions)), detail_count)
 
@@ -95,7 +120,7 @@ def qc_draft(messages: Sequence[BaseMessage], limit: int) -> str | None:
             continue
         if meta is None or meta.outcome not in WAITING | {"not_found"}:
             return None
-        questions = current_topic(messages[:index], limit).questions
+        questions = current_topic(messages[: index + 1], limit, include_last_answer=True).questions
         if questions:
             original, *details = (_MARKDOWN.sub(r"\\\1", line) for line in questions)
             text = f"**Черновик заявки в ОКК**\n\nПрошу уточнить порядок по вопросу: {original}"

@@ -28,6 +28,7 @@ class GuardResult(BaseModel):
     qc_action: Literal["none", "draft", "guide"]
     missing_detail: str | None
     area_only: bool
+    topic_relation: Literal["new_topic", "follow_up", "unclear"]
 
 
 async def invoke_structured[T: BaseModel](
@@ -85,7 +86,8 @@ async def classify(
             "области": area_codes,
             "ждём уточнения области": awaiting_area,
             "ждём уточнения условия": awaiting_detail,
-            "сообщения": questions,
+            "текущий запрос": questions[-1],
+            "предыдущие реплики пользователя": questions[:-1],
         },
         {"llm_operation": "guard", **(run or {})},
     )

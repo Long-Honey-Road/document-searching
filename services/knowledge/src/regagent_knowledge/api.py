@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Protocol
@@ -108,6 +109,28 @@ def _active_record(record: DocumentRecord | None, allowed: set[str]) -> bool:
         and record.version is not None
         and record.level in allowed
     )
+
+
+_DEMO_FINANCE_ARCHIVE = re.compile(r"\bзакрыт\w*\s+финансов\w*\s+архив\w*\b", re.I)
+
+
+def _named_restricted_document(req: SearchRequest, rows: list[DocumentRecord]) -> bool:
+    # Только явно названные документы из реестра. Закрытый workspace не запрашивается.
+    query = " ".join(req.query.casefold().split())
+    allowed = set(req.levels)
+    for row in rows:
+        if row.status != "indexed" or row.version is None or not row.level or row.level in allowed:
+            continue
+        names = [row.doc_id, row.title or ""]
+        if any(
+            re.search(rf"(?<![\w-]){re.escape(' '.join(name.casefold().split()))}(?![\w-])", query)
+            for name in names
+            if name.strip()
+        ):
+            return True
+        if row.doc_id == "finance-documents" and _DEMO_FINANCE_ARCHIVE.search(query):
+            return True
+    return False
 
 
 def _clause_fragment(
@@ -233,6 +256,12 @@ def create_app(
     @app.post("/search")
     async def search_route(req: SearchRequest) -> SearchResponse:
         current = _deps(app)
+        snapshot: list[DocumentRecord] = []
+
+        async def registry_snapshot() -> list[DocumentRecord]:
+            nonlocal snapshot
+            snapshot = await current.registry.all()
+            return snapshot
 
         async def read_indexed_clauses(record: DocumentRecord) -> list[Clause]:
             view = await asyncio.to_thread(
@@ -263,7 +292,7 @@ def create_app(
                 current.reranker,
                 current.min_score,
                 default_top_k=current.search_top_k,
-                registry_snapshot=current.registry.all,
+                registry_snapshot=registry_snapshot,
                 indexed_clauses=read_indexed_clauses,
                 practice_lookup=current.practices.visible
                 if current.practices is not None
@@ -272,6 +301,8 @@ def create_app(
                 rerank_text_max_chars=current.rerank_text_max_chars,
             )
             event["status"] = "ok" if response.fragments else "empty"
+            if _named_restricted_document(req, snapshot):
+                event["status"] = "access_limited"
             event["fragments"] = len(response.fragments)
             event["low_confidence"] = response.low_confidence
             event["areas_diverge"] = response.areas_diverge
