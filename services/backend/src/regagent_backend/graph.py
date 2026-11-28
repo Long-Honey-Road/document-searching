@@ -432,12 +432,22 @@ async def _answer(
         if any(line.strip() == NO_ANSWER for line in text.splitlines()):
             return _unanswered(run), run
         if clarification := parse_clarification(text):
-            if not areas and asks_for_area(clarification):
-                return _reply(ASK_AREA, "ask_area", reason="area_needed"), run
-            if not can_clarify:
-                return _unanswered(run), run
-            if not asks_for_area(clarification):
+            if asks_for_area(clarification):
+                if not areas:
+                    return _reply(ASK_AREA, "ask_area", reason="area_needed"), run
+                if attempt == 0:
+                    history.append(
+                        HumanMessage(
+                            "Область текущего запроса уже задана: "
+                            + ", ".join(areas)
+                            + ". Используй её для ответа по найденным пунктам."
+                        )
+                    )
+                    continue
+            elif can_clarify:
                 return _ask_detail(clarification, areas, area_source), run
+            else:
+                return _unanswered(run), run
         if not areas and any(result.areas_diverge for _, result in run.searches):
             return _reply(ASK_AREA, "ask_area", reason="areas_diverge"), run
         supported = citations.ok and not text.startswith((CLARIFY_PREFIX, NO_ANSWER))

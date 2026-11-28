@@ -1,6 +1,7 @@
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -540,6 +541,30 @@ async def test_expired_area_is_confirmed_before_an_unscoped_search(stand: Any) -
     answer = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
     assert meta(answer["messages"][-1]).outcome == "ask_area"
     assert not lookups
+
+
+async def test_answer_retries_instead_of_requesting_a_remembered_area(stand: Any) -> None:
+    model, graph, lookups = stand
+    await graph.store.aput(
+        ("users", "reader", "memory"),
+        "area:ДИБ",
+        {
+            "kind": "area",
+            "value": "ДИБ",
+            "source": "stated",
+            "confirmed_at": datetime.now(UTC).isoformat(),
+            "times_confirmed": 2,
+        },
+    )
+    model.responses = [
+        guard(),
+        {"content": "УТОЧНЕНИЕ: Какая область: ДИБ или общий регламент?"},
+        {"content": "Координатор [f:dib-project-activity@1#2.7]."},
+    ]
+    result = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
+    answer = meta(result["messages"][-1])
+    assert answer.outcome == "answer" and answer.area_source == "memory"
+    assert [lookup["areas"] for lookup in lookups] == [["ДИБ"]]
 
 
 async def test_initial_search_grounds_answer_without_a_model_tool_call(stand: Any) -> None:
