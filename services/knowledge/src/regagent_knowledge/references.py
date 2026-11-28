@@ -61,7 +61,7 @@ def _lemma(word: str) -> str:
     return (candidates[0].normal_form if candidates else word).replace("ё", "е")
 
 
-def _lemmas(text: str) -> tuple[str, ...]:
+def lemmas(text: str) -> tuple[str, ...]:
     return tuple(_lemma(word.group().casefold()) for word in _WORD.finditer(text))
 
 
@@ -100,7 +100,7 @@ def find_document_references(
 ) -> DocumentReferences:
     catalog: dict[tuple[str, ...], set[str]] = defaultdict(set)
     for entry in manifest:
-        title = _lemmas(entry.title)
+        title = lemmas(entry.title)
         if len(title) > 1:
             catalog[title].add(entry.doc_id)
     by_first: dict[str, list[tuple[str, ...]]] = defaultdict(list)
@@ -127,7 +127,7 @@ def find_document_references(
             if any(start <= left < end for left, _ in spans):
                 continue
             via = mention["title"].strip()
-            key = _lemmas(via)
+            key = lemmas(via)
             if len(key) > 1 and key not in matched:
                 matched.add(key)
                 result.missing.append(UnresolvedLink(number, via))

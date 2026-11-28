@@ -8,12 +8,18 @@ from unittest.mock import AsyncMock
 import aio_pika
 import pytest
 from regagent_common import broker
-from regagent_common.contracts import PracticeBinding, PracticePublicationResult, PracticePublish
+from regagent_common.contracts import (
+    PracticeBinding,
+    PracticePublicationResult,
+    PracticePublish,
+    SearchRequest,
+)
 from regagent_common.fragments import parse_header
 from regagent_knowledge.consumer import IndexQueue, run_practice_consumer
 from regagent_knowledge.okf import OkfStore
 from regagent_knowledge.practice import PracticeService
 from regagent_knowledge.registry import DocumentRecord
+from regagent_knowledge.search import search
 
 
 @pytest.fixture
@@ -70,6 +76,41 @@ async def test_publication_without_document_access_is_rejected(
     result = await practices.publish(denied)
     assert (result.status, result.error_code) == ("failed", "binding_unavailable")
     rag.insert.assert_not_awaited()
+
+
+@pytest.mark.leak
+async def test_financial_practice_can_only_be_published_and_found_at_its_level(
+    service: tuple[PracticeService, AsyncMock], publication: PracticePublish
+) -> None:
+    practices, rag = service
+    cast(AsyncMock, practices.registry.get).return_value = DocumentRecord(
+        "example", 1, "hash", "closed_fin", ["ДИБ"], "Пример", "indexed", None
+    )
+    assert (await practices.publish(publication)).error_code == "binding_unavailable"
+    financial = publication.model_copy(update={"approved_levels": ["public", "closed_fin"]})
+    assert (await practices.publish(financial)).status == "published"
+    level, _, chunks = rag.insert.await_args.args
+    assert level == "closed_fin"
+    rag.levels = ["public", "closed_fin"]
+    rag.query.side_effect = lambda level, *_: chunks if level == "closed_fin" else []
+    reranker = AsyncMock()
+    reranker.rerank.return_value = [0.9]
+
+    for levels in (["public"], ["public", "closed_fin"]):
+        result = await search(
+            SearchRequest(query="Добавьте сведения о сроках.", levels=levels),
+            rag,
+            practices.registry.get,
+            reranker,
+            min_score=0.2,
+            practice_lookup=practices.visible,
+        )
+        if "closed_fin" not in levels:
+            assert result.fragments == []
+        else:
+            [citation] = result.fragments
+            assert citation.fragment_id == "practice:practice-1"
+            assert citation.text == financial.text
 
 
 async def test_review_is_required_when_source_revision_changes(

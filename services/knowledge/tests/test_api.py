@@ -575,6 +575,28 @@ def test_search_expands_project_lead_only_when_needed(fixture_deps: ApiDeps) -> 
     ]
 
 
+def test_search_expands_glossary_without_adding_access_levels(fixture_deps: ApiDeps) -> None:
+    with TestClient(create_app(fixture_deps)) as client:
+        response = client.post(
+            "/search",
+            json={
+                "query": "Кто из менеджеров по продаже решений работает в crm?",
+                "levels": ["public"],
+            },
+            headers=HEADERS,
+        )
+    assert response.status_code == 200
+    assert isinstance(fixture_deps.rag, RagFixture)
+    assert fixture_deps.rag.calls == [
+        (
+            "public",
+            "Кто из менеджеров по продаже решений работает в crm? "
+            "(SS; CRM — система управления взаимоотношениями с клиентами)",
+            3,
+        )
+    ]
+
+
 def test_clause_and_refs_events_record_not_found(
     fixture_deps: ApiDeps, capsys: pytest.CaptureFixture[str]
 ) -> None:

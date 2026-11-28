@@ -3,7 +3,7 @@
 GitHub Actions проверяет Python, тесты на утечки (Postgres с AGE и RabbitMQ) и веб
 на PR и push в `main`. Пользовательский LaunchAgent на Mac каждые две минуты
 подтягивает только `origin/main` и выполняет проверки локально. Для запуска нужны
-доступ по SSH к репозиторию, работающий Docker Desktop, Ollama и вход в
+доступ по SSH к репозиторию, Docker Desktop с Compose 2.30 или новее, Ollama и вход в
 пользовательскую сессию macOS.
 
 Команды ниже проверены в zsh (оболочка macOS по умолчанию) и работают в bash.
@@ -92,9 +92,13 @@ GitHub Actions проверяет Python, тесты на утечки (Postgres
 `/auth/realms/master*`, релиз это проверяет. Пользователей, пароли и группы меняют через
 `kcadm.sh`, как ниже.
 
-Если realm уже был создан до добавления финансового уровня для демо-администратора,
-назначьте `/levels/closed_fin` пользователю `admin` в realm `regagent` через `kcadm.sh`.
-Для этого найдите идентификатор пользователя командой
+При запуске Keycloak с `ENV=stand` Compose проверяет, что демо-учётка `admin`
+с адресом `admin@example.invalid` и ролью `admin` состоит в `/levels/closed_fin`.
+Если её ещё нет в группе, скрипт добавляет её. После изменения группы нужен повторный вход.
+При ошибке выкладка продолжится и запишет предупреждение. Параметр
+`REGAGENT_DEMO_FINANCE_MIGRATION=off` отключает это действие на стенде.
+
+Для ручного назначения группы через `kcadm.sh` найдите идентификатор пользователя командой
 `get users -r regagent -q username=admin -q exact=true` и идентификатор группы через
 `get group-by-path/levels/closed_fin -r regagent`. Затем выполните
 `update users/<user-id>/groups/<group-id> -r regagent -n`.
