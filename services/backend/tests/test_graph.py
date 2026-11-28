@@ -543,7 +543,17 @@ async def test_expired_area_is_confirmed_before_an_unscoped_search(stand: Any) -
     assert not lookups
 
 
-async def test_answer_retries_instead_of_requesting_a_remembered_area(stand: Any) -> None:
+@pytest.mark.parametrize(
+    "clarification",
+    [
+        "Какая область: ДИБ или общий регламент?",
+        "Речь о проектах ДИБ или об общем регламенте организации проектной деятельности?",
+        "Речь о проектах ДИБ или ДБРЦТ?",
+    ],
+)
+async def test_answer_retries_instead_of_requesting_a_remembered_area(
+    stand: Any, clarification: str
+) -> None:
     model, graph, lookups = stand
     await graph.store.aput(
         ("users", "reader", "memory"),
@@ -558,13 +568,25 @@ async def test_answer_retries_instead_of_requesting_a_remembered_area(stand: Any
     )
     model.responses = [
         guard(),
-        {"content": "УТОЧНЕНИЕ: Какая область: ДИБ или общий регламент?"},
+        {"content": f"УТОЧНЕНИЕ: {clarification}"},
         {"content": "Координатор [f:dib-project-activity@1#2.7]."},
     ]
     result = await graph.ainvoke({"messages": [("human", "Кто назначает РП?")]}, config=CONFIG)
     answer = meta(result["messages"][-1])
     assert answer.outcome == "answer" and answer.area_source == "memory"
     assert [lookup["areas"] for lookup in lookups] == [["ДИБ"]]
+
+
+async def test_choice_of_conditions_inside_an_area_is_still_allowed(stand: Any) -> None:
+    model, graph, _ = stand
+    clarification = "Речь о полном или неполном комплекте документов в ДИБ?"
+    model.responses = [guard("ДИБ"), {"content": f"УТОЧНЕНИЕ: {clarification}"}]
+    result = await graph.ainvoke(
+        {"messages": [("human", "Кто согласует расчёт в ДИБ?")]}, config=CONFIG
+    )
+    reply = result["messages"][-1]
+    assert meta(reply).outcome == "ask_clarification"
+    assert reply.text == clarification
 
 
 async def test_initial_search_grounds_answer_without_a_model_tool_call(stand: Any) -> None:

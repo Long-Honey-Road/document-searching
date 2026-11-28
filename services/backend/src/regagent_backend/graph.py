@@ -342,7 +342,11 @@ async def _answer(
     if memory_line:
         prompt += "\n" + memory_line
     if areas:
-        prompt += "\nОбласти текущего запроса: " + ", ".join(areas)
+        prompt += (
+            "\nОбласти текущего запроса: "
+            + ", ".join(areas)
+            + ". Они уже выбраны. Уточняй только недостающие условия в этих областях."
+        )
     # Только текущая реплика является запросом. Предыстория нужна для разрешения ссылок
     # на тему или условия; ответы и результаты прошлого хода не передаются.
     history: list[AnyMessage] = [HumanMessage(question)]
@@ -432,7 +436,7 @@ async def _answer(
         if any(line.strip() == NO_ANSWER for line in text.splitlines()):
             return _unanswered(run), run
         if clarification := parse_clarification(text):
-            if asks_for_area(clarification):
+            if asks_for_area(clarification, settings.AREA_CODES):
                 if not areas:
                     return _reply(ASK_AREA, "ask_area", reason="area_needed"), run
                 if attempt == 0:
@@ -632,7 +636,7 @@ async def _turn(
         areas, source = (previous.area_used,), previous.area_source
 
     detail = valid_clarification(guard.missing_detail or "")
-    area_question = bool(detail and asks_for_area(detail))
+    area_question = bool(detail and asks_for_area(detail, settings.AREA_CODES))
     if continuation is None and detail and not area_question:
         return _ask_detail(detail, areas, source, topic_start=starts_topic)
 
