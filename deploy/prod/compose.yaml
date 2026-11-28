@@ -1,4 +1,12 @@
 services:
+  keycloak:
+    environment:
+      REGAGENT_ENV: ${ENV}
+      REGAGENT_DEMO_FINANCE_MIGRATION: ${REGAGENT_DEMO_FINANCE_MIGRATION:-on}
+    volumes:
+      - ./keycloak/ensure-demo-finance.sh:/opt/keycloak/ensure-demo-finance.sh:ro
+    post_start:
+      - command: ["/bin/bash", "-c", "/bin/bash /opt/keycloak/ensure-demo-finance.sh || echo 'Демо-администратор: не удалось подтвердить финансовую группу' >&2"]
   proxy:
     ports: !override
       - "127.0.0.1:${REGAGENT_ORIGIN_PORT:-18082}:8080"

@@ -16,6 +16,7 @@ from typing import Protocol
 from regagent_common.contracts import Fragment, PracticeSource, SearchRequest, SearchResponse
 from regagent_common.fragments import FragmentHeader, fragment_id, parse_header
 
+from .glossary import expand_query
 from .manifest import COMMON_AREA
 from .normalize import Clause, split_clauses
 from .registry import DocumentRecord
@@ -27,8 +28,6 @@ from .settings import (
 )
 
 log = logging.getLogger(__name__)
-_PROJECT_LEAD = re.compile(r"\bРП\b")
-_PROJECT_LEAD_FULL = re.compile(r"\bруководител\w*\s+проект\w*\b", re.I)
 
 
 class ChunkSearch(Protocol):
@@ -177,9 +176,7 @@ async def search(
         if registry_snapshot is not None
         else None
     )
-    query = req.query
-    if _PROJECT_LEAD.search(query) and not _PROJECT_LEAD_FULL.search(query):
-        query += " (РП — руководитель проекта)"
+    query = expand_query(req.query)
     chunks_by_level = await asyncio.gather(*(rag.query(level, query, top_k) for level in levels))
     allowed_areas = {*req.areas, COMMON_AREA} if req.areas else None
     acl: dict[str, DocumentRecord | str | None] = {}
